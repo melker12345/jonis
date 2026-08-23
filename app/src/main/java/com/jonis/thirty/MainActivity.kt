@@ -1,0 +1,1007 @@
+package com.jonis.thirty
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.sin
+import kotlin.random.Random
+
+// ---------- Config: version check + gate ----------
+
+// Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
+// each time you ship a new APK. If the remote version is higher, the app forces an update.
+private const val APP_VERSION = 1
+
+// Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
+private const val VERSION_URL =
+    "https://raw.githubusercontent.com/melker12345/jonis/master/version.json"
+
+// SHA-256 of the real-life-challenge code. Plaintext is "JONIS-5K" (case-insensitive).
+// Change it by running:  printf '%s' "YOURCODE" | sha256sum
+private const val GATE_CODE_HASH =
+    "8c9c3ba8e5142f60b6178986c1446be13d52b275ce5b4b4b3123d6770be9d029"
+
+// ---------- Journey data ----------
+
+enum class GameType { BEER, WHAC, MEMORY, SEQUENCE, TAP, NINJA, GATE }
+
+data class Quest(val title: String, val tag: String, val type: GameType, val goal: Int)
+
+private val quests = listOf(
+    Quest("Häll upp åt Pappa", "Styr Pappa in i ölstrålen tills glaset är fullt", GameType.BEER, 1),
+    Quest("Familjeminne", "Vänd korten och para ihop släkten", GameType.MEMORY, 1),
+    Quest("Whac-en-Farmor", "Klappa till släkten när de dyker upp — nå 12", GameType.WHAC, 12),
+    Quest("Familjesekvens", "Härma ordningen släkten lyser upp i", GameType.SEQUENCE, 5),
+    Quest("Klappa Farmor", "120 klapp på 22 sekunder. Kör!", GameType.TAP, 120),
+    Quest("Dubbel öl", "Strålen svänger snabbare nu. Fyll glaset igen", GameType.BEER, 2),
+    Quest("Familje-Ninja", "Svep sönder släkten som flyger upp — 15 träffar", GameType.NINJA, 15),
+    Quest("Minnesmästaren", "Två svårare minnesnivåer på raken", GameType.MEMORY, 2),
+    Quest("Whac-kaos", "Släkten poppar snabbare. Nå 18", GameType.WHAC, 18),
+    Quest("Sekvenskung", "Klara en sekvens på 7 i rad", GameType.SEQUENCE, 7),
+    Quest("Sista skålen", "Full fart på strålen. Fyll den sista ölen", GameType.BEER, 3),
+    Quest("🏃 Spring 5 km", "Visa Strava-bevis och få hemliga koden av festfixaren", GameType.GATE, 0),
+)
+
+// pool of family faces reused across games
+private val faces = listOf(
+    R.drawable.pappa to "Pappa",
+    R.drawable.melker to "Melker",
+    R.drawable.jonis to "Jonis",
+    R.drawable.farmor to "Farmor",
+)
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(state: Bundle?) {
+        super.onCreate(state)
+        setContent { JonisApp() }
+    }
+}
+
+@Composable
+fun JonisApp() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("jonis", Context.MODE_PRIVATE) }
+    var dark by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf<Int?>(null) }
+    var unlocked by remember { mutableIntStateOf(prefs.getInt("unlocked", 1)) }
+    var updateUrl by remember { mutableStateOf<String?>(null) }
+
+    // check GitHub for a newer version on launch; silently ignore if offline/unreachable
+    LaunchedEffect(Unit) {
+        val latest = fetchLatestVersion()
+        if (latest != null && latest.first > APP_VERSION) updateUrl = latest.second
+    }
+
+    MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+        val idx = selected
+        if (idx == null) {
+            Hub(dark, { dark = !dark }, unlocked) { selected = it }
+        } else {
+            GameHost(
+                quest = quests[idx],
+                index = idx,
+                onWinContinue = {
+                    selected = null
+                    unlocked = minOf(quests.size, maxOf(unlocked, idx + 2))
+                    prefs.edit().putInt("unlocked", unlocked).apply()
+                },
+                onBack = { selected = null },
+            )
+        }
+        updateUrl?.let { UpdateDialog(it) }
+    }
+}
+
+// ---------- Update check + helpers ----------
+
+private suspend fun fetchLatestVersion(): Pair<Int, String>? = withContext(Dispatchers.IO) {
+    try {
+        val conn = (URL(VERSION_URL).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 4000
+            readTimeout = 4000
+        }
+        conn.inputStream.bufferedReader().use {
+            val json = JSONObject(it.readText())
+            json.getInt("version") to json.getString("url")
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
+@Composable
+private fun UpdateDialog(url: String) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = { },
+        title = { Text("Ny version!", fontWeight = FontWeight.Black) },
+        text = { Text("En nyare version av festen finns. Uppdatera för att fortsätta.") },
+        confirmButton = {
+            Button(onClick = {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            }) { Text("Ladda ner uppdatering", fontWeight = FontWeight.Bold) }
+        },
+    )
+}
+
+private fun sha256(s: String): String =
+    MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+
+// ---------- Hub / road map ----------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Hub(dark: Boolean, toggle: () -> Unit, unlocked: Int, open: (Int) -> Unit) {
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Text("JONIS 30", fontWeight = FontWeight.Black, letterSpacing = 2.sp) },
+            actions = {
+                IconButton(toggle) {
+                    Icon(if (dark) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, "Byt tema")
+                }
+            },
+        )
+    }) { pad ->
+        Column(Modifier.padding(pad).padding(horizontal = 20.dp).fillMaxSize()) {
+            Text("JONIS\n30-ÅRS KAOS", fontSize = 39.sp, lineHeight = 40.sp, fontWeight = FontWeight.Black)
+            Text(
+                "${quests.size} uppdrag. Noll värdighet. En legend.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
+            )
+            LinearProgressIndicator(
+                { (unlocked - 1) / quests.size.toFloat() },
+                Modifier.fillMaxWidth().height(9.dp),
+                strokeCap = StrokeCap.Round,
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 18.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("KAOS FRAMSTEG", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("${unlocked - 1} / ${quests.size} klara", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            RoadMap(unlocked, open)
+        }
+    }
+}
+
+@Composable
+private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
+    val density = LocalDensity.current
+    val primary = MaterialTheme.colorScheme.primary
+    val green = Color(0xFFB7E34B)
+    val locked = MaterialTheme.colorScheme.surfaceVariant
+    val nodeStep = 108.dp
+    val nodeSize = 64.dp
+    // horizontal position per level: left / center / right zig-zag
+    val slots = listOf(0.18f, 0.5f, 0.82f, 0.5f)
+    fun slot(i: Int) = slots[i % slots.size]
+
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .padding(top = 4.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        val fullW = maxWidth
+        val fullWpx = with(density) { fullW.toPx() }
+        val stepPx = with(density) { nodeStep.toPx() }
+        val nodeSizePx = with(density) { nodeSize.toPx() }
+        val topPadPx = with(density) { 16.dp.toPx() }
+        val totalH = nodeStep * quests.size + 40.dp
+
+        Box(Modifier.fillMaxWidth().height(totalH)) {
+            // connector path drawn behind the nodes
+            Canvas(Modifier.fillMaxSize()) {
+                for (i in 0 until quests.size - 1) {
+                    val x1 = slot(i) * fullWpx
+                    val y1 = topPadPx + i * stepPx + nodeSizePx / 2
+                    val x2 = slot(i + 1) * fullWpx
+                    val y2 = topPadPx + (i + 1) * stepPx + nodeSizePx / 2
+                    val done = i < unlocked - 1
+                    drawLine(
+                        color = if (done) green else locked.copy(alpha = 0.6f),
+                        start = Offset(x1, y1),
+                        end = Offset(x2, y2),
+                        strokeWidth = 12f,
+                        cap = StrokeCap.Round,
+                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(4f, 26f), 0f),
+                    )
+                }
+            }
+            quests.indices.forEach { i ->
+                val active = i == unlocked - 1
+                val completed = i < unlocked - 1
+                val xBias = (slot(i) - 0.5f) * 2f   // -1f .. 1f for BiasAlignment
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .align(androidx.compose.ui.BiasAlignment(xBias, -1f))
+                        .padding(top = nodeStep * i)
+                        .width(nodeSize + 60.dp),
+                ) {
+                    Box(
+                        Modifier.size(nodeSize)
+                            .clip(CircleShape)
+                            .background(
+                                if (active) primary else if (completed) green else locked,
+                            )
+                            .border(
+                                if (active) 4.dp else 0.dp,
+                                Color(0xFFD7FF45),
+                                CircleShape,
+                            )
+                            .clickable(enabled = active) { open(i) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        when {
+                            completed -> Text("✓", fontSize = 26.sp, fontWeight = FontWeight.Black, color = Color(0xFF14203A))
+                            active && quests[i].type == GameType.GATE -> Text("🏃", fontSize = 26.sp)
+                            active -> Text("%02d".format(i + 1), fontSize = 22.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onPrimary)
+                            else -> Icon(Icons.Outlined.Lock, "Låst", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Text(
+                        quests[i].title,
+                        fontSize = 11.sp,
+                        fontWeight = if (active) FontWeight.Black else FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        color = if (active) MaterialTheme.colorScheme.onSurface
+                        else if (completed) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    if (active) {
+                        Text("KÖR", fontSize = 10.sp, fontWeight = FontWeight.Black, color = primary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- Game host + win overlay ----------
+
+@Composable
+private fun GameHost(quest: Quest, index: Int, onWinContinue: () -> Unit, onBack: () -> Unit) {
+    var won by remember(index) { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onBack) { Icon(Icons.Outlined.ArrowBack, "Tillbaka") }
+                Column(Modifier.padding(start = 4.dp)) {
+                    Text("UPPDRAG %02d".format(index + 1), color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(quest.title, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                }
+            }
+            Text(quest.tag, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp), textAlign = TextAlign.Center)
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                when (quest.type) {
+                    GameType.BEER -> BeerGame(quest.goal) { won = true }
+                    GameType.WHAC -> WhacGame(quest.goal) { won = true }
+                    GameType.MEMORY -> MemoryGame(quest.goal) { won = true }
+                    GameType.SEQUENCE -> SequenceGame(quest.goal) { won = true }
+                    GameType.TAP -> TapGame(quest.goal) { won = true }
+                    GameType.NINJA -> NinjaGame(quest.goal) { won = true }
+                    GameType.GATE -> GateScreen { won = true }
+                }
+            }
+        }
+        if (won) WinOverlay(onContinue = onWinContinue)
+    }
+}
+
+@Composable
+private fun WinOverlay(onContinue: () -> Unit) {
+    Box(
+        Modifier.fillMaxSize().background(Color(0xCC101010)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+            Text("🎉", fontSize = 72.sp)
+            Text("KLARAT!", fontSize = 40.sp, fontWeight = FontWeight.Black, color = Color(0xFFD7FF45))
+            Text("Nästa uppdrag upplåst.", color = Color.White, modifier = Modifier.padding(top = 8.dp, bottom = 28.dp))
+            Button(onClick = onContinue) { Text("Tillbaka till kartan", fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+// ---------- Real-life challenge gate ----------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GateScreen(onUnlock: () -> Unit) {
+    var code by remember { mutableStateOf("") }
+    var wrong by remember { mutableStateOf(false) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(12.dp)) {
+        Text("🏃", fontSize = 64.sp)
+        Text(
+            "Spring 5 km och visa Strava-beviset. Då får du den hemliga koden som låser upp resten av festen.",
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 16.dp),
+        )
+        OutlinedTextField(
+            value = code,
+            onValueChange = { code = it; wrong = false },
+            label = { Text("Ange kod") },
+            singleLine = true,
+            isError = wrong,
+        )
+        if (wrong) Text("Fel kod. Fortsätt springa! 🏃", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = {
+                if (sha256(code.trim().uppercase()) == GATE_CODE_HASH) onUnlock() else wrong = true
+            },
+            enabled = code.isNotBlank(),
+        ) { Text("Lås upp", fontWeight = FontWeight.Bold) }
+    }
+}
+
+// ---------- Game 1: Pour beer into Pappa ----------
+
+@Composable
+private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
+    val density = LocalDensity.current
+    var dadX by remember { mutableFloatStateOf(0.5f) }
+    var streamX by remember { mutableFloatStateOf(0.5f) }
+    var fill by remember { mutableFloatStateOf(0f) }
+    var elapsed by remember { mutableFloatStateOf(0f) }
+
+    val driftSpeed = 0.9f + difficulty * 0.5f
+    val fillRate = 0.32f
+    val drainRate = 0.15f
+    val catchWidth = 0.13f
+
+    BoxWithConstraints(
+        Modifier.fillMaxSize()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF243B66), Color(0xFF14203A)))),
+    ) {
+        val widthPx = with(density) { maxWidth.toPx() }
+        val pappaW = 152.dp
+        val pappaWpx = with(density) { pappaW.toPx() }
+        val pappaHpx = pappaWpx * (880f / 760f)
+        val bottomPadPx = with(density) { 8.dp.toPx() }
+
+        LaunchedEffect(difficulty) {
+            var last = 0L
+            fill = 0f
+            elapsed = 0f
+            while (true) {
+                val now = withFrameNanos { it }
+                if (last != 0L) {
+                    val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
+                    elapsed += dt
+                    streamX = 0.5f + 0.42f * sin(elapsed * driftSpeed)
+                    val aligned = abs(dadX - streamX) < catchWidth
+                    fill = (fill + (if (aligned) fillRate else -drainRate) * dt).coerceIn(0f, 1f)
+                    if (fill >= 1f) { onWin(); break }
+                }
+                last = now
+            }
+        }
+
+        val aligned = abs(dadX - streamX) < catchWidth
+
+        // beer glass at the top + beer-looking stream down to Pappa's mouth
+        Canvas(Modifier.fillMaxSize()) {
+            val sx = streamX * size.width
+            val mugCx = sx
+            val mugTop = 104f
+            val mugW = 150f
+            val mugH = 118f
+            val mouthY = size.height - bottomPadPx - pappaHpx * 0.36f
+            val streamTop = mugTop + mugH * 0.72f
+
+            // ---- the beer stream ----
+            val streamW = 46f
+            drawRoundRect(
+                color = Color(0xFFE8A317),
+                topLeft = Offset(sx - streamW / 2, streamTop),
+                size = Size(streamW, (mouthY - streamTop).coerceAtLeast(0f)),
+                cornerRadius = CornerRadius(streamW / 2, streamW / 2),
+            )
+            // lighter highlight on the stream
+            drawRoundRect(
+                color = Color(0xFFFFC845),
+                topLeft = Offset(sx - streamW / 2 + 7f, streamTop),
+                size = Size(12f, (mouthY - streamTop).coerceAtLeast(0f)),
+                cornerRadius = CornerRadius(7f, 7f),
+            )
+            // bubbles travelling down the stream
+            val span = (mouthY - streamTop).coerceAtLeast(1f)
+            for (b in 0 until 7) {
+                val phase = (elapsed * 260f + b * 90f) % span
+                drawCircle(Color(0x66FFFFFF), radius = 5f, center = Offset(sx + (if (b % 2 == 0) 8f else -8f), streamTop + phase))
+            }
+            // foam splash where it lands (green + pulsing larger when it's going in the mouth)
+            val pulse = (sin(elapsed * 9f) + 1f) / 2f
+            drawCircle(
+                if (aligned) Color(0xFFB7E34B) else Color(0xFFFFF3C4),
+                radius = if (aligned) 30f + pulse * 14f else 16f,
+                center = Offset(sx, mouthY),
+            )
+
+            // ---- the pouring glass (tilted mug) ----
+            rotate(degrees = 24f, pivot = Offset(mugCx, mugTop + mugH / 2)) {
+                // glass body
+                drawRoundRect(
+                    color = Color(0x33FFFFFF),
+                    topLeft = Offset(mugCx - mugW / 2, mugTop),
+                    size = Size(mugW, mugH),
+                    cornerRadius = CornerRadius(14f, 14f),
+                )
+                // beer inside (fills most of the mug)
+                drawRoundRect(
+                    color = Color(0xFFE8A317),
+                    topLeft = Offset(mugCx - mugW / 2 + 6f, mugTop + mugH * 0.30f),
+                    size = Size(mugW - 12f, mugH * 0.70f - 6f),
+                    cornerRadius = CornerRadius(10f, 10f),
+                )
+                // foam head
+                drawRoundRect(
+                    color = Color(0xFFFFF6DA),
+                    topLeft = Offset(mugCx - mugW / 2 + 6f, mugTop + 6f),
+                    size = Size(mugW - 12f, mugH * 0.26f),
+                    cornerRadius = CornerRadius(10f, 10f),
+                )
+                // glass outline
+                drawRoundRect(
+                    color = Color.White,
+                    topLeft = Offset(mugCx - mugW / 2, mugTop),
+                    size = Size(mugW, mugH),
+                    cornerRadius = CornerRadius(14f, 14f),
+                    style = Stroke(width = 5f),
+                )
+                // handle
+                drawArc(
+                    color = Color.White,
+                    startAngle = -70f,
+                    sweepAngle = 220f,
+                    useCenter = false,
+                    topLeft = Offset(mugCx + mugW / 2 - 14f, mugTop + 20f),
+                    size = Size(46f, 62f),
+                    style = Stroke(width = 6f),
+                )
+            }
+        }
+
+        // beer meter
+        Column(Modifier.align(Alignment.TopCenter).padding(top = 12.dp).fillMaxWidth(0.7f)) {
+            Text(
+                "GLAS: ${(fill * 100).toInt()}%",
+                color = Color.White,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            LinearProgressIndicator(
+                { fill },
+                Modifier.fillMaxWidth().height(14.dp).padding(top = 6.dp),
+                color = Color(0xFFE8A317),
+                trackColor = Color(0x33FFFFFF),
+                strokeCap = StrokeCap.Round,
+            )
+        }
+
+        // pulsing green glow ring behind Pappa's head while drinking
+        val glowPulse = (sin(elapsed * 6f) + 1f) / 2f
+        if (aligned) {
+            val glowW = pappaW * (1.18f + glowPulse * 0.12f)
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .offset {
+                        val maxX = (widthPx - pappaWpx).coerceAtLeast(0f)
+                        val gExtra = with(density) { (glowW - pappaW).toPx() } / 2f
+                        IntOffset((dadX * maxX).toInt().coerceIn(0, maxX.toInt()) - gExtra.toInt(), 0)
+                    }
+                    .padding(bottom = 4.dp)
+                    .size(glowW)
+                    .clip(CircleShape)
+                    .background(Color(0xFFB7E34B).copy(alpha = 0.30f + glowPulse * 0.30f)),
+            )
+        }
+
+        // Pappa cutout, draggable left/right (scales up while drinking)
+        val pappaScale = if (aligned) 1.08f + glowPulse * 0.05f else 1f
+        Image(
+            painter = painterResource(R.drawable.pappa1),
+            contentDescription = "Pappa",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .offset {
+                    val maxX = (widthPx - pappaWpx).coerceAtLeast(0f)
+                    IntOffset((dadX * maxX).toInt().coerceIn(0, maxX.toInt()), 0)
+                }
+                .padding(bottom = 8.dp)
+                .width(pappaW)
+                .graphicsLayer { scaleX = pappaScale; scaleY = pappaScale }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures { _, dragAmount ->
+                        dadX = (dadX + dragAmount / widthPx).coerceIn(0f, 1f)
+                    }
+                },
+        )
+
+        // "Pappa is drinking" label, only while aligned
+        if (aligned) {
+            Text(
+                "🍺 GULP GULP!",
+                color = Color(0xFFB7E34B),
+                fontWeight = FontWeight.Black,
+                fontSize = 22.sp,
+                modifier = Modifier.align(Alignment.Center).padding(bottom = 40.dp),
+            )
+        }
+
+        Text(
+            "Dra Pappa i sidled →",
+            color = Color(0xAAFFFFFF),
+            fontSize = 12.sp,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+        )
+    }
+}
+
+// ---------- Game 2: Whac-a-Family ----------
+
+@Composable
+private fun WhacGame(target: Int, onWin: () -> Unit) {
+    var score by remember { mutableIntStateOf(0) }
+    var active by remember { mutableIntStateOf(-1) }
+    var whoFace by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(target) {
+        score = 0
+        while (score < target) {
+            active = Random.nextInt(9)
+            whoFace = Random.nextInt(faces.size)
+            val upMs = (720L - score * 22L).coerceAtLeast(360L)
+            delay(upMs)
+            active = -1
+            delay(180L)
+        }
+        onWin()
+    }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("TRÄFFAR: $score / $target", fontWeight = FontWeight.Black, fontSize = 20.sp)
+        Spacer(Modifier.height(16.dp))
+        for (row in 0 until 3) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                for (col in 0 until 3) {
+                    val cell = row * 3 + col
+                    val isUp = active == cell
+                    Box(
+                        Modifier.size(96.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable(enabled = isUp) {
+                                if (active == cell) {
+                                    score++
+                                    active = -1
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isUp) {
+                            Image(
+                                painterResource(faces[whoFace].first),
+                                faces[whoFace].second,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)),
+                            )
+                        } else {
+                            Text("🕳", fontSize = 30.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- Game 3: Family memory (concentration) ----------
+
+@Composable
+private fun MemoryGame(levelsToWin: Int, onWin: () -> Unit) {
+    var level by remember { mutableIntStateOf(1) }
+    val cols = 4
+    // each pair is a distinct (face, number) so we can go beyond 4 pairs
+    val pairs = 4 + level * 2                 // level 1 -> 6 pairs (12 cards), level 2 -> 8 pairs (16 cards)
+    val deck = remember(level) { (0 until pairs).flatMap { listOf(it, it) }.shuffled() }
+    val rows = deck.size / cols
+    val matched = remember(level) { mutableStateListOf<Int>() }
+    val revealed = remember(level) { mutableStateListOf<Int>() }
+    var busy by remember(level) { mutableStateOf(false) }
+    var preview by remember(level) { mutableStateOf(true) }
+
+    LaunchedEffect(level) {
+        preview = true
+        delay((1600L - level * 400L).coerceAtLeast(600L))   // shorter peek each level
+        preview = false
+    }
+
+    LaunchedEffect(revealed.size) {
+        if (revealed.size == 2) {
+            busy = true
+            val (a, b) = revealed
+            if (deck[a] == deck[b]) {
+                matched.add(a); matched.add(b)
+                revealed.clear()
+            } else {
+                delay(650)
+                revealed.clear()
+            }
+            busy = false
+        }
+    }
+
+    LaunchedEffect(matched.size) {
+        if (matched.isNotEmpty() && matched.size == deck.size) {
+            delay(450)
+            if (level >= levelsToWin) onWin() else level++
+        }
+    }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("NIVÅ $level / $levelsToWin", fontWeight = FontWeight.Black, fontSize = 20.sp)
+        Text("Par: ${matched.size / 2} / ${deck.size / 2}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(14.dp))
+        for (row in 0 until rows) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                for (col in 0 until cols) {
+                    val pos = row * cols + col
+                    if (pos >= deck.size) continue
+                    val pairId = deck[pos]
+                    val faceUp = preview || pos in revealed || pos in matched
+                    Box(
+                        Modifier.size(72.dp, 88.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (faceUp) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.primary)
+                            .border(2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                            .clickable(enabled = !preview && !busy && pos !in revealed && pos !in matched) {
+                                revealed.add(pos)
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (faceUp) {
+                            Box(contentAlignment = Alignment.BottomEnd) {
+                                Image(
+                                    painterResource(faces[pairId % faces.size].first),
+                                    faces[pairId % faces.size].second,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+                                )
+                                // small badge distinguishes pairs that share a face
+                                Box(
+                                    Modifier.padding(4.dp).size(20.dp).clip(CircleShape).background(Color(0xCC101010)),
+                                    contentAlignment = Alignment.Center,
+                                ) { Text("${pairId + 1}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                            }
+                        } else {
+                            Text("?", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    }
+                }
+            }
+        }
+        if (preview) Text("Memorera!", modifier = Modifier.padding(top = 10.dp), fontWeight = FontWeight.Bold)
+    }
+}
+
+// ---------- Game 4: Sequence memory (Human Benchmark style) ----------
+
+@Composable
+private fun SequenceGame(target: Int, onWin: () -> Unit) {
+    val seq = remember { mutableStateListOf(Random.nextInt(9)) }
+    var showing by remember { mutableStateOf(true) }
+    var flashCell by remember { mutableIntStateOf(-1) }
+    var inputPos by remember { mutableIntStateOf(0) }
+    var round by remember { mutableIntStateOf(0) }   // bump to replay the sequence
+    var wrong by remember { mutableStateOf(false) }
+
+    LaunchedEffect(round) {
+        showing = true
+        inputPos = 0
+        delay(500)
+        for (c in seq) {
+            flashCell = c
+            delay(420)
+            flashCell = -1
+            delay(200)
+        }
+        showing = false
+    }
+
+    fun tap(cell: Int) {
+        if (showing) return
+        if (cell == seq[inputPos]) {
+            inputPos++
+            if (inputPos == seq.size) {
+                if (seq.size >= target) { onWin() }
+                else { seq.add(Random.nextInt(9)); round++ }
+            }
+        } else {
+            wrong = true
+            seq.clear(); seq.add(Random.nextInt(9)); round++
+        }
+    }
+
+    LaunchedEffect(wrong) { if (wrong) { delay(700); wrong = false } }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("LÄNGD: ${seq.size} / $target", fontWeight = FontWeight.Black, fontSize = 20.sp)
+        Text(
+            if (wrong) "Fel! Börjar om…" else if (showing) "Titta noga…" else "Din tur — härma ordningen",
+            fontSize = 12.sp,
+            color = if (wrong) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(16.dp))
+        for (row in 0 until 3) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                for (col in 0 until 3) {
+                    val cell = row * 3 + col
+                    val lit = flashCell == cell
+                    val rot by animateFloatAsState(if (lit) 180f else 0f, label = "flip")
+                    Box(
+                        Modifier.size(94.dp)
+                            .graphicsLayer { rotationY = rot; cameraDistance = 12f * density }
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable(enabled = !showing) { tap(cell) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (rot < 90f) {
+                            Box(
+                                Modifier.fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.primary),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("?", fontSize = 32.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onPrimary)
+                            }
+                        } else {
+                            Box(
+                                Modifier.fillMaxSize()
+                                    .graphicsLayer { rotationY = 180f }
+                                    .border(4.dp, Color(0xFFD7FF45), RoundedCornerShape(16.dp)),
+                            ) {
+                                Image(
+                                    painterResource(faces[cell % faces.size].first),
+                                    faces[cell % faces.size].second,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- Game 5: Tap grandma 70x in 30s ----------
+
+@Composable
+private fun TapGame(target: Int, onWin: () -> Unit) {
+    var taps by remember { mutableIntStateOf(0) }
+    var timeLeft by remember { mutableFloatStateOf(22f) }
+    var failed by remember { mutableStateOf(false) }
+    var bump by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        var last = 0L
+        while (timeLeft > 0f && taps < target) {
+            val now = withFrameNanos { it }
+            if (last != 0L) timeLeft -= (now - last) / 1_000_000_000f
+            last = now
+        }
+        if (taps >= target) onWin() else failed = true
+    }
+
+    LaunchedEffect(bump) { if (bump) { delay(70); bump = false } }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("KLAPP: $taps / $target", fontWeight = FontWeight.Black, fontSize = 24.sp)
+        Text("Tid: ${timeLeft.coerceAtLeast(0f).toInt()}s", fontWeight = FontWeight.Bold, color = if (timeLeft < 6f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(20.dp))
+        Image(
+            painterResource(R.drawable.farmor),
+            "Farmor",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(if (bump) 210.dp else 220.dp)
+                .clip(CircleShape)
+                .border(6.dp, Color(0xFFD7FF45), CircleShape)
+                .clickable(enabled = !failed && timeLeft > 0f) {
+                    taps++; bump = true
+                    if (taps >= target) onWin()
+                },
+        )
+        Spacer(Modifier.height(18.dp))
+        if (failed) {
+            Text("Tiden ute! ${taps}/$target", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+            Button(onClick = { taps = 0; timeLeft = 22f; failed = false }, modifier = Modifier.padding(top = 10.dp)) {
+                Text("Försök igen")
+            }
+        } else {
+            Text("KLAPPA FARMOR!", fontWeight = FontWeight.Black, fontSize = 16.sp)
+        }
+    }
+}
+
+// ---------- Game 6: Family Ninja (fruit-ninja style) ----------
+
+private class Flyer(
+    var x: Float, var y: Float, var vx: Float, var vy: Float,
+    val face: Int, var rot: Float = 0f, var vrot: Float = 0f,
+    var sliced: Boolean = false, var alive: Boolean = true,
+)
+
+@Composable
+private fun NinjaGame(target: Int, onWin: () -> Unit) {
+    val density = LocalDensity.current
+    var score by remember { mutableIntStateOf(0) }
+    var tick by remember { mutableIntStateOf(0) }
+    val flyers = remember { mutableStateListOf<Flyer>() }
+    val sizePx = with(density) { 78.dp.toPx() }
+
+    BoxWithConstraints(
+        Modifier.fillMaxSize()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF2A1D3A), Color(0xFF120B1C)))),
+    ) {
+        val w = with(density) { maxWidth.toPx() }
+        val h = with(density) { maxHeight.toPx() }
+
+        LaunchedEffect(Unit) {
+            var last = 0L
+            var sinceSpawn = 0f
+            val gravity = h * 0.9f
+            while (score < target) {
+                val now = withFrameNanos { it }
+                if (last != 0L) {
+                    val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
+                    sinceSpawn += dt
+                    if (sinceSpawn > 0.85f) {
+                        sinceSpawn = 0f
+                        val startX = w * (0.15f + 0.7f * Random.nextFloat())
+                        // aim the upward launch so the arc peaks well inside the screen,
+                        // then gravity pulls it back down across the visible area
+                        flyers.add(
+                            Flyer(
+                                x = startX, y = h + sizePx,
+                                vx = (Random.nextFloat() - 0.5f) * w * 0.5f,
+                                vy = -h * (1.05f + Random.nextFloat() * 0.25f),
+                                face = Random.nextInt(faces.size),
+                                rot = Random.nextFloat() * 360f,
+                                vrot = (Random.nextFloat() - 0.5f) * 480f,
+                            ),
+                        )
+                    }
+                    // physics loop owns ALL structural changes to the list
+                    for (f in flyers) {
+                        if (!f.alive) continue
+                        f.x += f.vx * dt
+                        f.y += f.vy * dt
+                        f.vy += gravity * dt
+                        f.rot += f.vrot * dt
+                        if (f.y > h + sizePx * 1.5f) f.alive = false
+                    }
+                    flyers.removeAll { !it.alive || it.sliced }
+                    tick++
+                }
+                last = now
+            }
+            onWin()
+        }
+
+        Box(
+            Modifier.fillMaxSize().pointerInput(Unit) {
+                detectDragGestures { change, _ ->
+                    val p = change.position
+                    // iterate a snapshot and ONLY set flags; the physics loop removes
+                    // sliced flyers, avoiding concurrent structural modification
+                    for (f in flyers.toList()) {
+                        if (f.alive && !f.sliced &&
+                            hypot(p.x - f.x, p.y - f.y) < sizePx * 0.75f
+                        ) {
+                            f.sliced = true
+                            score++
+                        }
+                    }
+                }
+            },
+        ) {
+            // read the frame tick in the SAME scope that emits the Images so the
+            // offset/rotation lambdas below are re-evaluated every physics frame
+            tick
+            flyers.forEach { f ->
+                if (f.alive && !f.sliced) {
+                    Image(
+                        painterResource(faces[f.face].first),
+                        faces[f.face].second,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .offset { IntOffset((f.x - sizePx / 2).toInt(), (f.y - sizePx / 2).toInt()) }
+                            .size(78.dp)
+                            .graphicsLayer { rotationZ = f.rot }
+                            .clip(CircleShape)
+                            .border(3.dp, Color.White, CircleShape),
+                    )
+                }
+            }
+        }
+
+        Text(
+            "SVEP: $score / $target",
+            color = Color.White,
+            fontWeight = FontWeight.Black,
+            fontSize = 20.sp,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+        )
+        Text(
+            "Dra fingret genom släkten",
+            color = Color(0xAAFFFFFF),
+            fontSize = 12.sp,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+        )
+    }
+}

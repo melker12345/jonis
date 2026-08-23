@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -62,7 +63,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 1
+private const val APP_VERSION = 2
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -221,92 +222,111 @@ private fun Hub(dark: Boolean, toggle: () -> Unit, unlocked: Int, open: (Int) ->
 @Composable
 private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
     val density = LocalDensity.current
-    val primary = MaterialTheme.colorScheme.primary
+    val wall = Color(0xFF2E5BFF)                 // pac-man maze wall (reads on light & dark)
+    val pellet = Color(0xFFFFC107)
     val green = Color(0xFFB7E34B)
-    val locked = MaterialTheme.colorScheme.surfaceVariant
-    val nodeStep = 108.dp
-    val nodeSize = 64.dp
-    // horizontal position per level: left / center / right zig-zag
-    val slots = listOf(0.18f, 0.5f, 0.82f, 0.5f)
-    fun slot(i: Int) = slots[i % slots.size]
+    val bg = MaterialTheme.colorScheme.background // corridor inner matches the parent bg
+    val primary = MaterialTheme.colorScheme.primary
+    val cols = 3
+    val nodeSize = 84.dp
+    val rowStep = 128.dp
+    val topPad = 12.dp
+    val rows = (quests.size + cols - 1) / cols
+
+    // grid position for node i: snake left->right on even rows, right->left on odd rows
+    fun colOf(i: Int): Int {
+        val p = i % cols
+        return if ((i / cols) % 2 == 0) p else cols - 1 - p
+    }
+    fun rowOf(i: Int) = i / cols
 
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .padding(top = 4.dp)
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(rememberScrollState()),   // no background: matches parent screen
     ) {
         val fullW = maxWidth
+        val colW = fullW / cols
         val fullWpx = with(density) { fullW.toPx() }
-        val stepPx = with(density) { nodeStep.toPx() }
-        val nodeSizePx = with(density) { nodeSize.toPx() }
-        val topPadPx = with(density) { 16.dp.toPx() }
-        val totalH = nodeStep * quests.size + 40.dp
+        val colWpx = fullWpx / cols
+        val nodePx = with(density) { nodeSize.toPx() }
+        val rowStepPx = with(density) { rowStep.toPx() }
+        val topPadPx = with(density) { topPad.toPx() }
+        val totalH = topPad + rowStep * rows
+
+        fun centerX(i: Int) = (colOf(i) + 0.5f) * colWpx
+        fun centerY(i: Int) = topPadPx + rowOf(i) * rowStepPx + nodePx / 2
 
         Box(Modifier.fillMaxWidth().height(totalH)) {
-            // connector path drawn behind the nodes
+            // pac-man wall connectors (outlined corridor) + pellet trail, behind the nodes
             Canvas(Modifier.fillMaxSize()) {
                 for (i in 0 until quests.size - 1) {
-                    val x1 = slot(i) * fullWpx
-                    val y1 = topPadPx + i * stepPx + nodeSizePx / 2
-                    val x2 = slot(i + 1) * fullWpx
-                    val y2 = topPadPx + (i + 1) * stepPx + nodeSizePx / 2
+                    val start = Offset(centerX(i), centerY(i))
+                    val end = Offset(centerX(i + 1), centerY(i + 1))
                     val done = i < unlocked - 1
-                    drawLine(
-                        color = if (done) green else locked.copy(alpha = 0.6f),
-                        start = Offset(x1, y1),
-                        end = Offset(x2, y2),
-                        strokeWidth = 12f,
-                        cap = StrokeCap.Round,
-                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(4f, 26f), 0f),
-                    )
+                    drawLine(if (done) wall else wall.copy(alpha = 0.3f), start, end, strokeWidth = 16f, cap = StrokeCap.Round)
+                    drawLine(bg, start, end, strokeWidth = 7f, cap = StrokeCap.Round)
+                    val dots = 4
+                    for (s in 1 until dots) {
+                        val t = s / dots.toFloat()
+                        val px = start.x + (end.x - start.x) * t
+                        val py = start.y + (end.y - start.y) * t
+                        drawCircle(pellet.copy(alpha = if (done) 0.25f else 0.85f), radius = 4f, center = Offset(px, py))
+                    }
                 }
             }
             quests.indices.forEach { i ->
                 val active = i == unlocked - 1
                 val completed = i < unlocked - 1
-                val xBias = (slot(i) - 0.5f) * 2f   // -1f .. 1f for BiasAlignment
+                val colLeftPx = centerX(i) - colWpx / 2
+                val rowTopPx = topPadPx + rowOf(i) * rowStepPx
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .align(androidx.compose.ui.BiasAlignment(xBias, -1f))
-                        .padding(top = nodeStep * i)
-                        .width(nodeSize + 60.dp),
+                        .width(colW)
+                        .offset { IntOffset(colLeftPx.toInt(), rowTopPx.toInt()) },
                 ) {
                     Box(
                         Modifier.size(nodeSize)
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(18.dp))
                             .background(
-                                if (active) primary else if (completed) green else locked,
+                                when {
+                                    completed -> green
+                                    active -> primary
+                                    else -> MaterialTheme.colorScheme.surfaceVariant
+                                },
                             )
-                            .border(
-                                if (active) 4.dp else 0.dp,
-                                Color(0xFFD7FF45),
-                                CircleShape,
-                            )
+                            .border(if (active) 3.dp else 0.dp, wall, RoundedCornerShape(18.dp))
                             .clickable(enabled = active) { open(i) },
                         contentAlignment = Alignment.Center,
                     ) {
                         when {
-                            completed -> Text("✓", fontSize = 26.sp, fontWeight = FontWeight.Black, color = Color(0xFF14203A))
-                            active && quests[i].type == GameType.GATE -> Text("🏃", fontSize = 26.sp)
-                            active -> Text("%02d".format(i + 1), fontSize = 22.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onPrimary)
+                            completed -> Text("✓", fontSize = 32.sp, fontWeight = FontWeight.Black, color = Color(0xFF14203A))
+                            active && quests[i].type == GameType.GATE -> Text("🏃", fontSize = 36.sp)
+                            active -> Text(
+                                "%02d".format(i + 1),
+                                fontSize = 26.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Black,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
                             else -> Icon(Icons.Outlined.Lock, "Låst", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     Text(
                         quests[i].title,
                         fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
                         fontWeight = if (active) FontWeight.Black else FontWeight.Bold,
                         textAlign = TextAlign.Center,
-                        color = if (active) MaterialTheme.colorScheme.onSurface
-                        else if (completed) MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        color = when {
+                            active -> primary
+                            completed -> MaterialTheme.colorScheme.onSurface
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                         modifier = Modifier.padding(top = 6.dp),
                     )
-                    if (active) {
-                        Text("KÖR", fontSize = 10.sp, fontWeight = FontWeight.Black, color = primary)
-                    }
                 }
             }
         }
@@ -318,29 +338,33 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
 @Composable
 private fun GameHost(quest: Quest, index: Int, onWinContinue: () -> Unit, onBack: () -> Unit) {
     var won by remember(index) { mutableStateOf(false) }
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onBack) { Icon(Icons.Outlined.ArrowBack, "Tillbaka") }
-                Column(Modifier.padding(start = 4.dp)) {
-                    Text("UPPDRAG %02d".format(index + 1), color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text(quest.title, fontSize = 22.sp, fontWeight = FontWeight.Black)
+    // Surface (not a bare Box) so LocalContentColor resolves to onBackground —
+    // otherwise default text/icons render black and vanish in dark theme.
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onBack) { Icon(Icons.Outlined.ArrowBack, "Tillbaka") }
+                    Column(Modifier.padding(start = 4.dp)) {
+                        Text("UPPDRAG %02d".format(index + 1), color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(quest.title, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+                Text(quest.tag, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp), textAlign = TextAlign.Center)
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    when (quest.type) {
+                        GameType.BEER -> BeerGame(quest.goal) { won = true }
+                        GameType.WHAC -> WhacGame(quest.goal) { won = true }
+                        GameType.MEMORY -> MemoryGame(quest.goal) { won = true }
+                        GameType.SEQUENCE -> SequenceGame(quest.goal) { won = true }
+                        GameType.TAP -> TapGame(quest.goal) { won = true }
+                        GameType.NINJA -> NinjaGame(quest.goal) { won = true }
+                        GameType.GATE -> GateScreen { won = true }
+                    }
                 }
             }
-            Text(quest.tag, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp), textAlign = TextAlign.Center)
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                when (quest.type) {
-                    GameType.BEER -> BeerGame(quest.goal) { won = true }
-                    GameType.WHAC -> WhacGame(quest.goal) { won = true }
-                    GameType.MEMORY -> MemoryGame(quest.goal) { won = true }
-                    GameType.SEQUENCE -> SequenceGame(quest.goal) { won = true }
-                    GameType.TAP -> TapGame(quest.goal) { won = true }
-                    GameType.NINJA -> NinjaGame(quest.goal) { won = true }
-                    GameType.GATE -> GateScreen { won = true }
-                }
-            }
+            if (won) WinOverlay(onContinue = onWinContinue)
         }
-        if (won) WinOverlay(onContinue = onWinContinue)
     }
 }
 
@@ -593,7 +617,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
 
         Text(
             "Dra Pappa i sidled →",
-            color = Color(0xAAFFFFFF),
+            color = Color(0xCCFFFFFF),
             fontSize = 12.sp,
             modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
         )
@@ -607,6 +631,7 @@ private fun WhacGame(target: Int, onWin: () -> Unit) {
     var score by remember { mutableIntStateOf(0) }
     var active by remember { mutableIntStateOf(-1) }
     var whoFace by remember { mutableIntStateOf(0) }
+    var bonkCell by remember { mutableIntStateOf(-1) }
 
     LaunchedEffect(target) {
         score = 0
@@ -620,6 +645,9 @@ private fun WhacGame(target: Int, onWin: () -> Unit) {
         }
         onWin()
     }
+
+    // clear the transient bonk graphic shortly after a hit
+    LaunchedEffect(bonkCell) { if (bonkCell >= 0) { delay(320L); bonkCell = -1 } }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text("TRÄFFAR: $score / $target", fontWeight = FontWeight.Black, fontSize = 20.sp)
@@ -637,6 +665,7 @@ private fun WhacGame(target: Int, onWin: () -> Unit) {
                                 if (active == cell) {
                                     score++
                                     active = -1
+                                    bonkCell = cell
                                 }
                             },
                         contentAlignment = Alignment.Center,
@@ -650,6 +679,21 @@ private fun WhacGame(target: Int, onWin: () -> Unit) {
                             )
                         } else {
                             Text("🕳", fontSize = 30.sp)
+                        }
+                        // transient bonk burst, overlaid so it never shifts layout
+                        if (bonkCell == cell) {
+                            var grown by remember { mutableStateOf(false) }
+                            LaunchedEffect(Unit) { grown = true }
+                            val pop by animateFloatAsState(if (grown) 1.3f else 0.4f, label = "bonk")
+                            Text(
+                                "💥",
+                                fontSize = 46.sp,
+                                modifier = Modifier.graphicsLayer {
+                                    scaleX = pop
+                                    scaleY = pop
+                                    alpha = (1.6f - pop).coerceIn(0f, 1f)
+                                },
+                            )
                         }
                     }
                 }
@@ -672,6 +716,13 @@ private fun MemoryGame(levelsToWin: Int, onWin: () -> Unit) {
     val revealed = remember(level) { mutableStateListOf<Int>() }
     var busy by remember(level) { mutableStateOf(false) }
     var preview by remember(level) { mutableStateOf(true) }
+
+    // distinct border color per pairId so same-face pairs are still tellable apart
+    val pairColors = listOf(
+        Color(0xFFEF5350), Color(0xFF42A5F5), Color(0xFF66BB6A), Color(0xFFFFCA28),
+        Color(0xFFAB47BC), Color(0xFFFF7043), Color(0xFF26C6DA), Color(0xFFEC407A),
+        Color(0xFF9CCC65), Color(0xFF7E57C2),
+    )
 
     LaunchedEffect(level) {
         preview = true
@@ -712,30 +763,28 @@ private fun MemoryGame(levelsToWin: Int, onWin: () -> Unit) {
                     if (pos >= deck.size) continue
                     val pairId = deck[pos]
                     val faceUp = preview || pos in revealed || pos in matched
+                    val pairColor = pairColors[pairId % pairColors.size]
                     Box(
                         Modifier.size(72.dp, 88.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (faceUp) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.primary)
-                            .border(2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                            .border(
+                                if (faceUp) 5.dp else 2.dp,
+                                if (faceUp) pairColor else MaterialTheme.colorScheme.outline,
+                                RoundedCornerShape(12.dp),
+                            )
                             .clickable(enabled = !preview && !busy && pos !in revealed && pos !in matched) {
                                 revealed.add(pos)
                             },
                         contentAlignment = Alignment.Center,
                     ) {
                         if (faceUp) {
-                            Box(contentAlignment = Alignment.BottomEnd) {
-                                Image(
-                                    painterResource(faces[pairId % faces.size].first),
-                                    faces[pairId % faces.size].second,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
-                                )
-                                // small badge distinguishes pairs that share a face
-                                Box(
-                                    Modifier.padding(4.dp).size(20.dp).clip(CircleShape).background(Color(0xCC101010)),
-                                    contentAlignment = Alignment.Center,
-                                ) { Text("${pairId + 1}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
-                            }
+                            Image(
+                                painterResource(faces[pairId % faces.size].first),
+                                faces[pairId % faces.size].second,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+                            )
                         } else {
                             Text("?", fontSize = 28.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onPrimary)
                         }
@@ -757,6 +806,8 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
     var inputPos by remember { mutableIntStateOf(0) }
     var round by remember { mutableIntStateOf(0) }   // bump to replay the sequence
     var wrong by remember { mutableStateOf(false) }
+    var pressCell by remember { mutableIntStateOf(-1) }      // last tapped cell
+    var pressOk by remember { mutableStateOf(true) }         // was that press correct?
 
     LaunchedEffect(round) {
         showing = true
@@ -773,19 +824,25 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
 
     fun tap(cell: Int) {
         if (showing) return
+        pressCell = cell
         if (cell == seq[inputPos]) {
+            pressOk = true
             inputPos++
             if (inputPos == seq.size) {
                 if (seq.size >= target) { onWin() }
                 else { seq.add(Random.nextInt(9)); round++ }
             }
         } else {
+            pressOk = false
             wrong = true
             seq.clear(); seq.add(Random.nextInt(9)); round++
         }
     }
 
     LaunchedEffect(wrong) { if (wrong) { delay(700); wrong = false } }
+    // clear the transient press highlight; the key includes both cell and round
+    // so consecutive taps on the same tile still re-trigger the pop
+    LaunchedEffect(pressCell, inputPos, round) { if (pressCell >= 0) { delay(240L); pressCell = -1 } }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text("LÄNGD: ${seq.size} / $target", fontWeight = FontWeight.Black, fontSize = 20.sp)
@@ -801,10 +858,20 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
                     val cell = row * 3 + col
                     val lit = flashCell == cell
                     val rot by animateFloatAsState(if (lit) 180f else 0f, label = "flip")
+                    val pressed = pressCell == cell
+                    val pressScale by animateFloatAsState(if (pressed) 1.12f else 1f, label = "press")
+                    val ringColor = if (pressOk) Color(0xFF32E0FF) else Color(0xFFFF4D4D)
                     Box(
                         Modifier.size(94.dp)
-                            .graphicsLayer { rotationY = rot; cameraDistance = 12f * density }
+                            .graphicsLayer {
+                                rotationY = rot; cameraDistance = 12f * density
+                                scaleX = pressScale; scaleY = pressScale
+                            }
                             .clip(RoundedCornerShape(16.dp))
+                            .then(
+                                if (pressed) Modifier.border(5.dp, ringColor, RoundedCornerShape(16.dp))
+                                else Modifier,
+                            )
                             .clickable(enabled = !showing) { tap(cell) },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -999,7 +1066,7 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
         )
         Text(
             "Dra fingret genom släkten",
-            color = Color(0xAAFFFFFF),
+            color = Color(0xCCFFFFFF),
             fontSize = 12.sp,
             modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
         )

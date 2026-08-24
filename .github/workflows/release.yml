@@ -1,11 +1,12 @@
 # Builds the APK and publishes it as a GitHub release.
 #
-#   git tag v20 && git push origin v20
+# Two ways to cut a release:
+#   - push a version tag:  git tag v20 && git push origin v20
+#   - or run this workflow manually and type the tag (e.g. v20) — Actions then
+#     creates the tag itself, which is handy where local tag pushes are refused.
 #
-# ...produces a release tagged v20 with app-debug.apk attached, then points the
-# in-app updater at it. A manual run (workflow_dispatch) builds and uploads the
-# APK as a run artifact without cutting a release — use it to sanity-check the
-# pipeline before tagging.
+# A manual run with the tag left blank just builds the APK and uploads it as a
+# run artifact, for checking the pipeline without cutting a release.
 
 name: Build & release APK
 
@@ -13,6 +14,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to release (e.g. v20). Leave blank to build only."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -24,6 +30,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0        # need master too, for the version.json bump below
+
+      # Collapses "tag push" and "manual run with a tag" into one value; empty
+      # means build-only. Taken through env, never interpolated into the script,
+      # so the input cannot inject shell.
+      - name: Resolve release tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          elif [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag=""
+          fi
+          if [ -n "$tag" ] && ! echo "$tag" | grep -qE '^v[0-9]+$'; then
+            echo "::error::tag must look like v20, got '$tag'"
+            exit 1
+          fi
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "Release tag: ${tag:-<none, build only>}"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -45,9 +72,9 @@ jobs:
       # the APK. A tag that disagrees with the source would ship a build that keeps
       # re-prompting for an update, so fail loudly here instead.
       - name: Check tag matches APP_VERSION and versionCode
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${RELEASE_TAG#v}"
           app=$(grep -oP 'APP_VERSION = \K\d+' app/src/main/java/com/jonis/thirty/MainActivity.kt)
           code=$(grep -oP 'versionCode = \K\d+' app/build.gradle.kts)
           echo "tag=$tag APP_VERSION=$app versionCode=$code"
@@ -62,26 +89,28 @@ jobs:
       - name: Upload APK as run artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-${{ github.ref_name }}
+          name: app-debug-${{ env.RELEASE_TAG || github.sha }}
           path: app/build/outputs/apk/debug/app-debug.apk
 
+      # Creates the tag at this commit if it does not already exist.
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$RELEASE_TAG" \
             app/build/outputs/apk/debug/app-debug.apk \
-            --title "Jonis 30 $GITHUB_REF_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "Jonis 30 $RELEASE_TAG" \
             --generate-notes
 
       # Only once the APK is actually downloadable. Bumping version.json any earlier
       # shows every older install a forced-update dialog pointing at the previous
       # APK, which reports the old version again — an update loop with no way out.
       - name: Point the updater at the new release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: |
-          ver="${GITHUB_REF_NAME#v}"
+          ver="${RELEASE_TAG#v}"
           git checkout -B master origin/master
           sed -i "s/\"version\": [0-9]*/\"version\": $ver/" version.json
           if git diff --quiet version.json; then

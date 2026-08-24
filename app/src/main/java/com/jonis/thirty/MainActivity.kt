@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 5
+private const val APP_VERSION = 6
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -112,7 +112,10 @@ fun JonisApp() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("jonis", Context.MODE_PRIVATE) }
     var selected by remember { mutableStateOf<Int?>(null) }
-    var unlocked by remember { mutableIntStateOf(prefs.getInt("unlocked", 1)) }
+    // clamp saved progress to the current quest count — an older build may have
+    // stored a higher value than the (now shorter) list, which would leave every
+    // node "completed" and none tappable
+    var unlocked by remember { mutableIntStateOf(prefs.getInt("unlocked", 1).coerceIn(1, quests.size)) }
     var updateUrl by remember { mutableStateOf<String?>(null) }
 
     // check GitHub for a newer version on launch; silently ignore if offline/unreachable
@@ -299,7 +302,8 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                                 },
                             )
                             .border(if (active) 3.dp else 0.dp, wall, RoundedCornerShape(18.dp))
-                            .clickable(enabled = active) { open(i) },
+                            // active node plays; completed nodes can be replayed
+                            .clickable(enabled = active || completed) { open(i) },
                         contentAlignment = Alignment.Center,
                     ) {
                         when {

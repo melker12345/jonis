@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 20
+private const val APP_VERSION = 21
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -1432,6 +1432,10 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
         val jumpV = hpx * 1.15f
         val springV = hpx * 1.95f
         val gravity = hpx * 1.9f
+        // a normal jump only rises this far (apex = v²/2g); every gap between consecutive
+        // platforms is capped below it so the next platform is ALWAYS reachable — no dead ends
+        val maxReach = jumpV * jumpV / (2f * gravity)
+        val maxGap = maxReach * 0.82f
 
         // world y increases downward: jumping is negative vy, falling is positive
         LaunchedEffect(restart) {
@@ -1441,7 +1445,8 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
             score = 0; failed = false
             plats.add(Plat(wpx / 2f - platW / 2f, playerSz, platW, 0, false))
             var topGen = playerSz
-            repeat(16) { topGen -= spacing; plats.add(spawnPlat(topGen, wpx, platW, 0)) }
+            val startGap = minOf(spacing, maxGap)
+            repeat(16) { topGen -= startGap; plats.add(spawnPlat(topGen, wpx, platW, 0)) }
 
             var last = 0L
             var minPy = py
@@ -1485,7 +1490,8 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
                     }
                     // generate platforms above; sparser + more obstacles as the climb gets higher
                     while (topGen > camY - spacing) {
-                        topGen -= spacing * (0.95f + Random.nextFloat() * 0.65f + (score * 0.02f).coerceAtMost(1.0f))
+                        // grow the gap with score for difficulty, but never beyond a single jump
+                        topGen -= (spacing * (0.95f + Random.nextFloat() * 0.65f + (score * 0.02f).coerceAtMost(1.0f))).coerceAtMost(maxGap)
                         val kind = when {
                             score > 4 && Random.nextFloat() < 0.24f -> 1     // breaking (earlier + more)
                             score > 2 && Random.nextFloat() < 0.16f -> 2

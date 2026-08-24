@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 14
+private const val APP_VERSION = 15
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -90,7 +90,7 @@ private val quests = listOf(
     Quest("Klappa Farmor", "Klappa Farmor — slå 170 på tiden!", GameType.TAP, 170),
     Quest("Familje-Ninja", "Svep släkten, undvik bomben — slå 100", GameType.NINJA, 100),
     Quest("Släkttornet", "Släpp släkten i en hög — stapla 10", GameType.STACK, 10),
-    Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten", GameType.JUMP, 25),
+    Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten — nå 80", GameType.JUMP, 80),
     Quest("Spring 5 km", "Visa Strava-bevis och få hemliga koden av festfixaren", GameType.GATE, 0),
 )
 
@@ -1378,7 +1378,8 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
                     if (py - camY < hpx * 0.45f) camY = py - hpx * 0.45f
                     if (py < minPy) {
                         minPy = py
-                        score = (-minPy / spacing).toInt()   // no target — climb as high as you can
+                        score = (-minPy / spacing).toInt()
+                        if (score >= target) { onWin(); break }   // beat the target height
                     }
                     // land on a platform only while falling; interval test avoids tunnelling
                     if (vy > 0f) {
@@ -1440,13 +1441,13 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
                 detectHorizontalDragGestures { _, dx -> px += dx }
             },
         ) {
-            tick
             plats.forEach { p ->
                 if (p.alive) {
-                    val sy = p.y - camY
                     Box(
                         Modifier
-                            .offset { IntOffset(p.x.toInt(), sy.toInt()) }
+                            // read `tick` inside the placement lambda so it re-runs every
+                            // physics frame — smooth motion without recomposing the scene
+                            .offset { tick; IntOffset(p.x.toInt(), (p.y - camY).toInt()) }
                             .size(with(density) { p.w.toDp() }, with(density) { platH.toDp() })
                             .clip(RoundedCornerShape(8.dp))
                             .background(
@@ -1464,24 +1465,22 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
                 }
             }
             obstacles.forEach { o ->
-                val sy = o.y - camY
                 Image(
                     painterResource(faces[o.face].first), faces[o.face].second,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .offset { IntOffset((o.x - obstSz / 2).toInt(), (sy - obstSz / 2).toInt()) }
+                        .offset { tick; IntOffset((o.x - obstSz / 2).toInt(), (o.y - camY - obstSz / 2).toInt()) }
                         .size(with(density) { obstSz.toDp() })
                         .clip(CircleShape)
                         .border(3.dp, Color(0xFFFF5252), CircleShape),
                 )
             }
             if (!failed) {
-                val sy = py - camY
                 Image(
-                    painterResource(R.drawable.farmor), "Farmor",
+                    painterResource(R.drawable.farmor1), "Farmor",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .offset { IntOffset((px - playerSz / 2).toInt(), (sy - playerSz / 2).toInt()) }
+                        .offset { tick; IntOffset((px - playerSz / 2).toInt(), (py - camY - playerSz / 2).toInt()) }
                         .size(with(density) { playerSz.toDp() })
                         .clip(CircleShape)
                         .border(4.dp, Color(0xFFD7FF45), CircleShape),
@@ -1489,11 +1488,10 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
             }
         }
 
-        Text(
-            "HÖJD: $score",
-            color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 20.sp,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
-        )
+        Column(Modifier.align(Alignment.TopCenter).padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("HÖJD: $score", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 20.sp)
+            Text("SLÅ $target", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+        }
         if (!failed) {
             Text(
                 "Dra i sidled för att styra", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,

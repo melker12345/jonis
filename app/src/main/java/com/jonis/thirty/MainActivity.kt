@@ -64,24 +64,25 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 15
+private const val APP_VERSION = 16
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
     "https://raw.githubusercontent.com/melker12345/jonis/master/version.json"
 
-// SHA-256 of the real-life-challenge code. Plaintext is "JONIS-5K" (case-insensitive).
+// SHA-256 of the present-gate code. Plaintext is "GODIS-250" (case-insensitive).
 // Change it by running:  printf '%s' "YOURCODE" | sha256sum
 private const val GATE_CODE_HASH =
-    "8c9c3ba8e5142f60b6178986c1446be13d52b275ce5b4b4b3123d6770be9d029"
+    "33a86e7311d126f1fde5fa0b7ba0d9929043efd9b64e825fd5df6c073c5485b2"
 
 // ---------- Journey data ----------
 
-enum class GameType { BEER, WHAC, MEMORY, SEQUENCE, TAP, NINJA, STACK, JUMP, GATE }
+enum class GameType { BEER, WHAC, MEMORY, SEQUENCE, TAP, NINJA, STACK, JUMP, MAZE, GATE, LOCKED }
 
 data class Quest(val title: String, val tag: String, val type: GameType, val goal: Int)
 
-// one node per minigame — no repeats — with the gate as the grand finale
+// Nodes 1-9 are minigames, node 10 is the present/candy-budget gate. Nodes 11-30 are
+// grayed placeholders ("more to come") until the post-gate path is designed.
 private val quests = listOf(
     Quest("Häll upp åt Pappa", "Styr Pappa in i ölstrålen tills glaset är fullt", GameType.BEER, 1),
     Quest("Familjeminne", "Vänd korten och para ihop släkten", GameType.MEMORY, 2),
@@ -91,8 +92,9 @@ private val quests = listOf(
     Quest("Familje-Ninja", "Svep släkten, undvik bomben — slå 100", GameType.NINJA, 100),
     Quest("Släkttornet", "Släpp släkten i en hög — stapla 10", GameType.STACK, 10),
     Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten — nå 80", GameType.JUMP, 80),
-    Quest("Spring 5 km", "Visa Strava-bevis och få hemliga koden av festfixaren", GameType.GATE, 0),
-)
+    Quest("Farmor i mörkret", "Farmor har gått vilse i en mörk labyrint — lotsa ut henne", GameType.MAZE, 0),
+    Quest("Presenten 🎁", "En budget för godis väntar — skicka bildbevis", GameType.GATE, 0),
+) + List(20) { Quest("???", "Kommer snart", GameType.LOCKED, 0) }
 
 // pool of family faces reused across games
 private val faces = listOf(
@@ -124,6 +126,9 @@ fun JonisApp() {
     // node "completed" and none tappable
     var unlocked by remember { mutableIntStateOf(prefs.getInt("unlocked", 1).coerceIn(1, quests.size)) }
     var updateUrl by remember { mutableStateOf<String?>(null) }
+    // chosen play-style ("MINI" or "IRL"); null until picked on first launch. Drives the
+    // post-node-10 path (nodes 11+) once that content is designed.
+    var mode by remember { mutableStateOf(prefs.getString("mode", null)) }
 
     // check GitHub for a newer version on launch; silently ignore if offline/unreachable
     LaunchedEffect(Unit) {
@@ -148,8 +153,35 @@ fun JonisApp() {
                 onBack = { selected = null },
             )
         }
+        // ask how they want to play, once, before anything else
+        if (mode == null) {
+            ModeDialog { picked ->
+                mode = picked
+                prefs.edit().putString("mode", picked).apply()
+            }
+        }
         updateUrl?.let { UpdateDialog(it) }
     }
+}
+
+@Composable
+private fun ModeDialog(onPick: (String) -> Unit) {
+    AlertDialog(
+        onDismissRequest = { },
+        title = { Text("Hur vill du fira? 🎉", fontWeight = FontWeight.Black) },
+        text = {
+            Text(
+                "Välj din väg genom kalaset. De första 10 nivåerna är samma — ditt val " +
+                    "påverkar utmaningarna som väntar efter presenten.",
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onPick("MINI") }) { Text("Enkla minigames", fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = { onPick("IRL") }) { Text("IRL-utmaningar") }
+        },
+    )
 }
 
 // ---------- Update check + helpers ----------
@@ -294,8 +326,11 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                 }
             }
             quests.indices.forEach { i ->
-                val active = i == unlocked - 1
-                val completed = i < unlocked - 1
+                val placeholder = quests[i].type == GameType.LOCKED
+                val isGift = quests[i].type == GameType.GATE
+                // placeholders are never active/completed — they stay grayed "more to come"
+                val active = !placeholder && i == unlocked - 1
+                val completed = !placeholder && i < unlocked - 1
                 val colLeftPx = centerX(i) - colWpx / 2
                 val rowTopPx = topPadPx + rowOf(i) * rowStepPx
                 Column(
@@ -307,19 +342,24 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                     Box(
                         Modifier.size(nodeSize)
                             .clip(RoundedCornerShape(18.dp))
+                            .alpha(if (placeholder) 0.38f else 1f)
                             .background(
                                 when {
+                                    placeholder -> MaterialTheme.colorScheme.surfaceVariant
                                     completed -> green
                                     active -> primary
                                     else -> MaterialTheme.colorScheme.surfaceVariant
                                 },
                             )
                             .border(if (active) 3.dp else 0.dp, wall, RoundedCornerShape(18.dp))
-                            // active node plays; completed nodes can be replayed
+                            // active node plays; completed nodes can be replayed; placeholders don't open
                             .clickable(enabled = active || completed) { open(i) },
                         contentAlignment = Alignment.Center,
                     ) {
                         when {
+                            placeholder -> Text("?", fontSize = 30.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            // the present/gift node reads as a 🎁 rather than a number
+                            isGift -> Text("🎁", fontSize = 34.sp)
                             // completed: green node keeps its number in dark ink — no checkmark
                             completed -> Text(
                                 "%02d".format(i + 1),
@@ -353,6 +393,7 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                         // opaque chip in the parent bg color so the connector line
                         // never shows through the label text
                         modifier = Modifier
+                            .alpha(if (placeholder) 0.5f else 1f)
                             .padding(top = 6.dp)
                             .background(bg, RoundedCornerShape(6.dp))
                             .padding(horizontal = 5.dp, vertical = 1.dp),
@@ -391,7 +432,9 @@ private fun GameHost(quest: Quest, index: Int, onWinContinue: () -> Unit, onBack
                         GameType.NINJA -> NinjaGame(quest.goal) { won = true }
                         GameType.STACK -> StackGame(quest.goal) { won = true }
                         GameType.JUMP -> JumperGame(quest.goal) { won = true }
+                        GameType.MAZE -> MazeGame { won = true }
                         GameType.GATE -> GateScreen { won = true }
+                        GameType.LOCKED -> Text("Kommer snart…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -441,10 +484,17 @@ private fun ScorePanel(score: Int, onRetry: () -> Unit, onContinue: () -> Unit) 
 private fun GateScreen(onUnlock: () -> Unit) {
     var code by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(12.dp)) {
-        Text("🏃", fontSize = 64.sp)
+    val scroll = rememberScrollState()
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(12.dp).verticalScroll(scroll),
+    ) {
+        Text("🎁", fontSize = 64.sp)
         Text(
-            "Spring 5 km och visa Strava-beviset. Då får du den hemliga koden som låser upp resten av festen.",
+            "Oops! Jag underskattade hur gammal du fyller… så för att köpa mig själv lite mer " +
+                "utvecklingstid: här kommer en budget på minst 250 kr som INTE ska gå till något " +
+                "annat än godis/snacks. 🍬\n\nSkicka bildbevis via SMS till festfixaren, så får du " +
+                "koden som låser upp resten av festen.",
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(vertical = 16.dp),
@@ -456,7 +506,7 @@ private fun GateScreen(onUnlock: () -> Unit) {
             singleLine = true,
             isError = wrong,
         )
-        if (wrong) Text("Fel kod. Fortsätt springa! 🏃", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        if (wrong) Text("Fel kod. Skicka godisbeviset först! 🍬", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
@@ -1502,6 +1552,154 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
                 Text("Farmor ramlade!", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
                 ScorePanel(score, onRetry = { restart++ }, onContinue = onWin)
             }
+        }
+    }
+}
+
+// ---------- Game 9: Dark Maze (guide Farmor out) ----------
+
+private class MazeCell(
+    var top: Boolean = true, var right: Boolean = true,
+    var bottom: Boolean = true, var left: Boolean = true, var visited: Boolean = false,
+)
+
+@Composable
+private fun MazeGame(onWin: () -> Unit) {
+    val cols = 11
+    val rows = 15
+    val density = LocalDensity.current
+    var restart by remember { mutableIntStateOf(0) }
+
+    // carve a perfect maze with iterative depth-first search (unique path, always solvable)
+    val maze = remember(restart) {
+        val g = Array(cols) { Array(rows) { MazeCell() } }
+        val stack = ArrayDeque<Pair<Int, Int>>()
+        g[0][0].visited = true
+        stack.addLast(0 to 0)
+        while (stack.isNotEmpty()) {
+            val (x, y) = stack.last()
+            val nbrs = buildList {
+                if (y > 0 && !g[x][y - 1].visited) add(Triple(x, y - 1, 0))
+                if (x < cols - 1 && !g[x + 1][y].visited) add(Triple(x + 1, y, 1))
+                if (y < rows - 1 && !g[x][y + 1].visited) add(Triple(x, y + 1, 2))
+                if (x > 0 && !g[x - 1][y].visited) add(Triple(x - 1, y, 3))
+            }
+            if (nbrs.isEmpty()) { stack.removeLast(); continue }
+            val (nx, ny, dir) = nbrs[Random.nextInt(nbrs.size)]
+            when (dir) {
+                0 -> { g[x][y].top = false; g[nx][ny].bottom = false }
+                1 -> { g[x][y].right = false; g[nx][ny].left = false }
+                2 -> { g[x][y].bottom = false; g[nx][ny].top = false }
+                else -> { g[x][y].left = false; g[nx][ny].right = false }
+            }
+            g[nx][ny].visited = true
+            stack.addLast(nx to ny)
+        }
+        g
+    }
+
+    var fx by remember(restart) { mutableIntStateOf(0) }
+    var fy by remember(restart) { mutableIntStateOf(0) }
+    var won by remember(restart) { mutableStateOf(false) }
+    val exitX = cols - 1
+    val exitY = rows - 1
+
+    val wallColor = Color(0xFF6DE0FF)
+    val litFloor = MaterialTheme.colorScheme.surfaceVariant
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wpx = with(density) { maxWidth.toPx() }
+        val hpx = with(density) { maxHeight.toPx() }
+        val cell = minOf(wpx / cols, hpx / rows)
+        val originX = (wpx - cell * cols) / 2f
+        val originY = (hpx - cell * rows) / 2f
+        val visionR = 2.3f
+
+        fun tryMove(dx: Int, dy: Int) {
+            if (won) return
+            val c = maze[fx][fy]
+            val ok = when {
+                dx == 1 -> !c.right
+                dx == -1 -> !c.left
+                dy == 1 -> !c.bottom
+                dy == -1 -> !c.top
+                else -> false
+            }
+            if (ok) {
+                fx += dx; fy += dy
+                if (fx == exitX && fy == exitY) { won = true; onWin() }
+            }
+        }
+
+        var accX by remember(restart) { mutableFloatStateOf(0f) }
+        var accY by remember(restart) { mutableFloatStateOf(0f) }
+        Canvas(
+            Modifier.fillMaxSize().pointerInput(restart) {
+                detectDragGestures(onDragEnd = { accX = 0f; accY = 0f }) { _, drag ->
+                    accX += drag.x; accY += drag.y
+                    val thresh = cell * 0.5f
+                    if (abs(accX) > abs(accY)) {
+                        if (accX > thresh) { tryMove(1, 0); accX = 0f; accY = 0f }
+                        else if (accX < -thresh) { tryMove(-1, 0); accX = 0f; accY = 0f }
+                    } else {
+                        if (accY > thresh) { tryMove(0, 1); accX = 0f; accY = 0f }
+                        else if (accY < -thresh) { tryMove(0, -1); accX = 0f; accY = 0f }
+                    }
+                }
+            },
+        ) {
+            drawRect(Color(0xFF05070D))   // fog of war — you only see near Farmor
+            for (x in 0 until cols) for (y in 0 until rows) {
+                val dist = hypot((x - fx).toFloat(), (y - fy).toFloat())
+                if (dist > visionR + 1f) continue
+                val a = if (dist <= visionR) 1f else (visionR + 1f - dist).coerceIn(0f, 1f)
+                val left = originX + x * cell
+                val top = originY + y * cell
+                val isExit = x == exitX && y == exitY
+                drawRect(
+                    color = (if (isExit) Color(0xFF7CFF6B) else litFloor).copy(alpha = a * 0.9f),
+                    topLeft = Offset(left + 1f, top + 1f),
+                    size = Size(cell - 2f, cell - 2f),
+                )
+                val c = maze[x][y]
+                val w = wallColor.copy(alpha = a)
+                val sw = (cell * 0.12f).coerceAtLeast(3f)
+                if (c.top) drawLine(w, Offset(left, top), Offset(left + cell, top), sw)
+                if (c.bottom) drawLine(w, Offset(left, top + cell), Offset(left + cell, top + cell), sw)
+                if (c.left) drawLine(w, Offset(left, top), Offset(left, top + cell), sw)
+                if (c.right) drawLine(w, Offset(left + cell, top), Offset(left + cell, top + cell), sw)
+            }
+        }
+
+        // Farmor rides on top of the maze at her current cell
+        Image(
+            painterResource(R.drawable.farmor1), "Farmor",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .offset { IntOffset((originX + fx * cell + cell * 0.12f).toInt(), (originY + fy * cell + cell * 0.12f).toInt()) }
+                .size(with(density) { (cell * 0.76f).toDp() })
+                .clip(CircleShape)
+                .border(3.dp, Color(0xFFFFC107), CircleShape),
+        )
+
+        Text(
+            "Hitta ut ur mörkret! 🔦",
+            color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 16.sp,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp)
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+        )
+        Row(
+            Modifier.align(Alignment.BottomCenter).padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Dra för att gå",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
+                modifier = Modifier.background(MaterialTheme.colorScheme.background.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            OutlinedButton(onClick = { restart++ }) { Text("Ny labyrint") }
         }
     }
 }

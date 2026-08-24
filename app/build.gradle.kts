@@ -5,7 +5,7 @@ plugins {
 }
 
 android { namespace = "com.jonis.thirty"; compileSdk = 35
-    defaultConfig { applicationId = "com.jonis.thirty"; minSdk = 24; targetSdk = 35; versionCode = 15; versionName = "2.4" }
+    defaultConfig { applicationId = "com.jonis.thirty"; minSdk = 24; targetSdk = 35; versionCode = 16; versionName = "2.5" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
 

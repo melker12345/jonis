@@ -63,7 +63,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 2
+private const val APP_VERSION = 3
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -92,7 +92,7 @@ private val quests = listOf(
     Quest("Whac-kaos", "Släkten poppar snabbare. Nå 18", GameType.WHAC, 18),
     Quest("Sekvenskung", "Klara en sekvens på 7 i rad", GameType.SEQUENCE, 7),
     Quest("Sista skålen", "Full fart på strålen. Fyll den sista ölen", GameType.BEER, 3),
-    Quest("🏃 Spring 5 km", "Visa Strava-bevis och få hemliga koden av festfixaren", GameType.GATE, 0),
+    Quest("Spring 5 km", "Visa Strava-bevis och få hemliga koden av festfixaren", GameType.GATE, 0),
 )
 
 // pool of family faces reused across games
@@ -302,7 +302,6 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                     ) {
                         when {
                             completed -> Text("✓", fontSize = 32.sp, fontWeight = FontWeight.Black, color = Color(0xFF14203A))
-                            active && quests[i].type == GameType.GATE -> Text("🏃", fontSize = 36.sp)
                             active -> Text(
                                 "%02d".format(i + 1),
                                 fontSize = 26.sp,
@@ -325,7 +324,12 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                             completed -> MaterialTheme.colorScheme.onSurface
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         },
-                        modifier = Modifier.padding(top = 6.dp),
+                        // opaque chip in the parent bg color so the connector line
+                        // never shows through the label text
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .background(bg, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp),
                     )
                 }
             }

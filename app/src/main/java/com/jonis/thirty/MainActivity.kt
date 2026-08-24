@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 12
+private const val APP_VERSION = 13
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -83,14 +83,14 @@ data class Quest(val title: String, val tag: String, val type: GameType, val goa
 
 // one node per minigame — no repeats — with the gate as the grand finale
 private val quests = listOf(
-    Quest("Häll upp åt Pappa", "Styr Pappa in i ölstrålen tills glaset är fullt", GameType.BEER, 2),
+    Quest("Häll upp åt Pappa", "Styr Pappa in i ölstrålen tills glaset är fullt", GameType.BEER, 1),
     Quest("Familjeminne", "Vänd korten och para ihop släkten", GameType.MEMORY, 2),
-    Quest("Whac-en-Farmor", "Klappa till släkten när de dyker upp — nå 15", GameType.WHAC, 15),
-    Quest("Familjesekvens", "Härma ordningen släkten lyser upp i", GameType.SEQUENCE, 6),
-    Quest("Klappa Farmor", "120 klapp på 22 sekunder. Kör!", GameType.TAP, 120),
-    Quest("Familje-Ninja", "Svep sönder släkten som flyger upp — 15 träffar", GameType.NINJA, 15),
-    Quest("Släkttornet", "Släpp släkten i en hög — pricka mitten. Stapla 10", GameType.STACK, 10),
-    Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten. Klättra 25", GameType.JUMP, 25),
+    Quest("Whac-en-Farmor", "Klappa släkten när de dyker upp — slå 32", GameType.WHAC, 32),
+    Quest("Familjesekvens", "Härma ordningen — nå längd 10", GameType.SEQUENCE, 10),
+    Quest("Klappa Farmor", "Klappa Farmor — slå 170 på tiden!", GameType.TAP, 170),
+    Quest("Familje-Ninja", "Svep släkten, undvik bomben — slå 100", GameType.NINJA, 100),
+    Quest("Släkttornet", "Släpp släkten i en hög — stapla 10", GameType.STACK, 10),
+    Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten", GameType.JUMP, 25),
     Quest("Spring 5 km", "Visa Strava-bevis och få hemliga koden av festfixaren", GameType.GATE, 0),
 )
 
@@ -477,12 +477,11 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
     var fill by remember { mutableFloatStateOf(0f) }
     var elapsed by remember { mutableFloatStateOf(0f) }
 
-    // tuned harder: the stream swings faster + on two frequencies (less predictable),
-    // the catch zone is narrower and the glass drains quicker when you miss
-    val driftSpeed = 1.7f + difficulty * 0.7f
-    val fillRate = 0.30f
-    val drainRate = 0.24f
-    val catchWidth = 0.10f
+    // gentle & forgiving: slow steady swing, wide catch zone, fills fast, drains slow
+    val driftSpeed = 0.9f + difficulty * 0.35f
+    val fillRate = 0.36f
+    val drainRate = 0.13f
+    val catchWidth = 0.16f
 
     val ink = MaterialTheme.colorScheme.onSurface   // theme-aware outline/text now there's no dark backdrop
     BoxWithConstraints(
@@ -509,8 +508,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
                 if (last != 0L) {
                     val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
                     elapsed += dt
-                    streamX = (0.5f + 0.34f * sin(elapsed * driftSpeed) +
-                        0.12f * sin(elapsed * driftSpeed * 2.7f)).coerceIn(0.06f, 0.94f)
+                    streamX = (0.5f + 0.40f * sin(elapsed * driftSpeed)).coerceIn(0.08f, 0.92f)
                     val aligned = abs(dadX - streamX) < catchWidth
                     fill = (fill + (if (aligned) fillRate else -drainRate) * dt).coerceIn(0f, 1f)
                     if (fill >= 1f) { onWin(); break }
@@ -721,6 +719,7 @@ private fun WhacGame(target: Int, onWin: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("TRÄFFAR: $score", fontWeight = FontWeight.Black, fontSize = 22.sp)
+            Text("SLÅ $target", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
             Text(
                 "Tid: ${timeLeft.coerceAtLeast(0f).toInt()}s",
                 fontWeight = FontWeight.Bold,
@@ -741,6 +740,7 @@ private fun WhacGame(target: Int, onWin: () -> Unit) {
                                         score++
                                         active = -1
                                         bonkCell = cell
+                                        if (score >= target) onWin()
                                     }
                                 },
                             contentAlignment = Alignment.Center,
@@ -905,8 +905,11 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
         if (cell == seq[inputPos]) {
             pressOk = true
             inputPos++
-            // no target — the sequence keeps growing until you slip
-            if (inputPos == seq.size) { seq.add(Random.nextInt(9)); round++ }
+            // reach the target length to win; otherwise the sequence keeps growing
+            if (inputPos == seq.size) {
+                if (seq.size >= target) onWin()
+                else { seq.add(Random.nextInt(9)); round++ }
+            }
         } else {
             pressOk = false
             ended = true
@@ -924,7 +927,7 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("LÄNGD: ${seq.size}", fontWeight = FontWeight.Black, fontSize = 20.sp)
+            Text("LÄNGD: ${seq.size} · SLÅ $target", fontWeight = FontWeight.Black, fontSize = 20.sp)
             Text(
                 if (showing) "Titta noga…" else "Din tur — härma ordningen",
                 fontSize = 12.sp,
@@ -1024,10 +1027,11 @@ private fun TapGame(target: Int, onWin: () -> Unit) {
                     .border(6.dp, Color(0xFFD7FF45), CircleShape)
                     .clickable(enabled = !ended && timeLeft > 0f) {
                         taps++; bump = true
+                        if (taps >= target) onWin()
                     },
             )
             Spacer(Modifier.height(18.dp))
-            Text("KLAPPA FARMOR!", fontWeight = FontWeight.Black, fontSize = 16.sp)
+            Text("KLAPPA FARMOR! · SLÅ $target", fontWeight = FontWeight.Black, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
         }
         if (ended) ScorePanel(taps, onRetry = { restart++ }, onContinue = onWin)
     }
@@ -1113,7 +1117,7 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
                             hypot(p.x - f.x, p.y - f.y) < sizePx * 0.72f
                         ) {
                             f.sliced = true
-                            if (f.bomb) failed = true else score++
+                            if (f.bomb) failed = true else { score++; if (score >= target) onWin() }
                         }
                     }
                 }
@@ -1157,12 +1161,10 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
             }
         }
 
-        Text(
-            "SVEP: $score",
-            fontWeight = FontWeight.Black,
-            fontSize = 20.sp,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
-        )
+        Column(Modifier.align(Alignment.TopCenter).padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("SVEP: $score", fontWeight = FontWeight.Black, fontSize = 20.sp)
+            Text("SLÅ $target", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+        }
         if (!failed) {
             Text(
                 "Svep släkten — undvik bomben 💣",
@@ -1243,7 +1245,7 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
             if (overlap <= wpx * 0.02f) { failed = true; return }   // missed the stack
             if (abs(movingLeft - top.left) < wpx * 0.03f) perfectFlash = true
             placed.add(Slab(left, overlap, movingFace))
-            // no target — keep stacking until you miss
+            if (placed.size - 1 >= target) { onWin(); return }   // stacked enough — you win
             movingWidth = overlap
             movingFace = Random.nextInt(faces.size)
             movingLeft = if (dir > 0) 0f else wpx - overlap
@@ -1290,7 +1292,7 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
         }
 
         Text(
-            "TORN: ${(placed.size - 1).coerceAtLeast(0)}",
+            "TORN: ${(placed.size - 1).coerceAtLeast(0)} · SLÅ $target",
             color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 20.sp,
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
         )
@@ -1387,11 +1389,11 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
                             if (px + playerSz * 0.25f > p.x && px - playerSz * 0.25f < p.x + p.w &&
                                 prevFeet <= p.y && feet >= p.y
                             ) {
-                                if (p.kind == 1) p.alive = false            // breaking: fall through
-                                else {
-                                    vy = -(if (p.boot || p.kind == 2) springV else jumpV)
-                                    py = p.y - playerSz * 0.35f
-                                }
+                                // every platform gives a bounce; breaking ones then vanish
+                                // so they can only be used once (never a dead end)
+                                vy = -(if (p.boot || p.kind == 2) springV else jumpV)
+                                py = p.y - playerSz * 0.35f
+                                if (p.kind == 1) p.alive = false
                                 break
                             }
                         }

@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 17
+private const val APP_VERSION = 18
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -1604,7 +1604,7 @@ private fun MazeGame(onWin: () -> Unit) {
     val exitX = cols - 1
     val exitY = rows - 1
 
-    val wallColor = Color(0xFF63E6FF)
+    val wallColor = Color(0xFF000000)
     val floorColor = MaterialTheme.colorScheme.surfaceVariant
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -1612,7 +1612,7 @@ private fun MazeGame(onWin: () -> Unit) {
         val hpx = with(density) { maxHeight.toPx() }
         // zoomed in: only ~5 cells fit across, the rest of the maze lives off-screen
         val cell = minOf(wpx, hpx) / 5f
-        val visionR = 2.4f
+        val visionR = 1.6f   // tighter flashlight now that we're zoomed in
 
         // camera glides so Farmor stays centred; the maze scrolls around her (Pac-Man style)
         val camX by animateFloatAsState((fx + 0.5f) * cell - wpx / 2f, label = "camx")

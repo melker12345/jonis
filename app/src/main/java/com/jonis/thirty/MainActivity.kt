@@ -461,9 +461,11 @@ private fun WinOverlay(onContinue: () -> Unit) {
 }
 
 // End-of-round panel for the "play to your max" games: shows the achieved score
-// and lets you replay for a better run or continue. (Targets to beat come later.)
+// against the target. The round only counts as cleared when the target is met —
+// below it there is no way onward, just another try, so no node can be skipped.
 @Composable
-private fun ScorePanel(score: Int, onRetry: () -> Unit, onContinue: () -> Unit) {
+private fun ScorePanel(score: Int, target: Int, onRetry: () -> Unit, onContinue: () -> Unit) {
+    val cleared = score >= target
     Column(
         Modifier
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), RoundedCornerShape(18.dp))
@@ -471,10 +473,34 @@ private fun ScorePanel(score: Int, onRetry: () -> Unit, onContinue: () -> Unit) 
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("DIN POÄNG", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("$score", fontSize = 60.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+        Text(
+            "$score",
+            fontSize = 60.sp,
+            fontWeight = FontWeight.Black,
+            color = if (cleared) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+        )
+        Text(
+            "MÅL: $target",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!cleared) {
+            Text(
+                "Du behöver $target för att klara utmaningen — ${target - score} kvar!",
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
         Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onRetry) { Text("Försök igen") }
-            Button(onClick = onContinue) { Text("Fortsätt →", fontWeight = FontWeight.Bold) }
+            if (cleared) {
+                OutlinedButton(onClick = onRetry) { Text("Försök igen") }
+                Button(onClick = onContinue) { Text("Fortsätt →", fontWeight = FontWeight.Bold) }
+            } else {
+                Button(onClick = onRetry) { Text("Försök igen", fontWeight = FontWeight.Bold) }
+            }
         }
     }
 }
@@ -827,7 +853,7 @@ private fun WhacGame(target: Int, onWin: () -> Unit) {
                 }
             }
         }
-        if (ended) ScorePanel(score, onRetry = { restart++ }, onContinue = onWin)
+        if (ended) ScorePanel(score, target, onRetry = { restart++ }, onContinue = onWin)
     }
 }
 
@@ -1036,7 +1062,7 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
             }
         }
         }
-        if (ended) ScorePanel(seq.size - 1, onRetry = { retry() }, onContinue = onWin)
+        if (ended) ScorePanel(seq.size - 1, target, onRetry = { retry() }, onContinue = onWin)
     }
 }
 
@@ -1085,7 +1111,7 @@ private fun TapGame(target: Int, onWin: () -> Unit) {
             Spacer(Modifier.height(18.dp))
             Text("KLAPPA FARMOR! · KLAPPA $target", fontWeight = FontWeight.Black, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
         }
-        if (ended) ScorePanel(taps, onRetry = { restart++ }, onContinue = onWin)
+        if (ended) ScorePanel(taps, target, onRetry = { restart++ }, onContinue = onWin)
     }
 }
 
@@ -1227,7 +1253,7 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
         } else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("BOM! 💥", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
-                ScorePanel(score, onRetry = { restart++ }, onContinue = onWin)
+                ScorePanel(score, target, onRetry = { restart++ }, onContinue = onWin)
             }
         }
     }
@@ -1362,7 +1388,7 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
         } else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Rasade!", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
-                ScorePanel((placed.size - 1).coerceAtLeast(0), onRetry = { restart++ }, onContinue = onWin)
+                ScorePanel((placed.size - 1).coerceAtLeast(0), target, onRetry = { restart++ }, onContinue = onWin)
             }
         }
     }
@@ -1552,7 +1578,7 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
         } else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Farmor ramlade!", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
-                ScorePanel(score, onRetry = { restart++ }, onContinue = onWin)
+                ScorePanel(score, target, onRetry = { restart++ }, onContinue = onWin)
             }
         }
     }

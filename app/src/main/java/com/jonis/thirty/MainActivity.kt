@@ -9,6 +9,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -63,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 4
+private const val APP_VERSION = 5
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -110,7 +111,6 @@ class MainActivity : ComponentActivity() {
 fun JonisApp() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("jonis", Context.MODE_PRIVATE) }
-    var dark by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<Int?>(null) }
     var unlocked by remember { mutableIntStateOf(prefs.getInt("unlocked", 1)) }
     var updateUrl by remember { mutableStateOf<String?>(null) }
@@ -121,10 +121,11 @@ fun JonisApp() {
         if (latest != null && latest.first > APP_VERSION) updateUrl = latest.second
     }
 
-    MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+    // theme follows the system setting automatically — no manual toggle
+    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
         val idx = selected
         if (idx == null) {
-            Hub(dark, { dark = !dark }, unlocked) { selected = it }
+            Hub(unlocked) { selected = it }
         } else {
             GameHost(
                 quest = quests[idx],
@@ -180,14 +181,19 @@ private fun sha256(s: String): String =
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Hub(dark: Boolean, toggle: () -> Unit, unlocked: Int, open: (Int) -> Unit) {
+private fun Hub(unlocked: Int, open: (Int) -> Unit) {
     Scaffold(topBar = {
         TopAppBar(
             title = { Text("JONIS 30", fontWeight = FontWeight.Black, letterSpacing = 2.sp) },
             actions = {
-                IconButton(toggle) {
-                    Icon(if (dark) Icons.Outlined.LightMode else Icons.Outlined.DarkMode, "Byt tema")
-                }
+                // version badge — lets you confirm at a glance which build is installed
+                Text(
+                    "v$APP_VERSION",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 18.dp),
+                )
             },
         )
     }) { pad ->
@@ -297,8 +303,7 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                         contentAlignment = Alignment.Center,
                     ) {
                         when {
-                            // completed: keep the number, dark ink on the green node,
-                            // with a small check badge so "done" still reads at a glance
+                            // completed: green node keeps its number in dark ink — no checkmark
                             completed -> Text(
                                 "%02d".format(i + 1),
                                 fontSize = 26.sp,
@@ -314,16 +319,6 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                                 color = MaterialTheme.colorScheme.onPrimary,
                             )
                             else -> Icon(Icons.Outlined.Lock, "Låst", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        // small "done" check badge in the corner of completed nodes
-                        if (completed) {
-                            Box(
-                                Modifier.align(Alignment.TopEnd).padding(6.dp)
-                                    .size(22.dp).clip(CircleShape).background(Color(0xFF14203A)),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text("✓", fontSize = 13.sp, fontWeight = FontWeight.Black, color = green)
-                            }
                         }
                     }
                     Text(

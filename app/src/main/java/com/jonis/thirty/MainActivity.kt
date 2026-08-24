@@ -63,7 +63,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 3
+private const val APP_VERSION = 4
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -80,18 +80,14 @@ enum class GameType { BEER, WHAC, MEMORY, SEQUENCE, TAP, NINJA, GATE }
 
 data class Quest(val title: String, val tag: String, val type: GameType, val goal: Int)
 
+// one node per minigame — no repeats — with the gate as the grand finale
 private val quests = listOf(
-    Quest("Häll upp åt Pappa", "Styr Pappa in i ölstrålen tills glaset är fullt", GameType.BEER, 1),
-    Quest("Familjeminne", "Vänd korten och para ihop släkten", GameType.MEMORY, 1),
-    Quest("Whac-en-Farmor", "Klappa till släkten när de dyker upp — nå 12", GameType.WHAC, 12),
-    Quest("Familjesekvens", "Härma ordningen släkten lyser upp i", GameType.SEQUENCE, 5),
+    Quest("Häll upp åt Pappa", "Styr Pappa in i ölstrålen tills glaset är fullt", GameType.BEER, 2),
+    Quest("Familjeminne", "Vänd korten och para ihop släkten", GameType.MEMORY, 2),
+    Quest("Whac-en-Farmor", "Klappa till släkten när de dyker upp — nå 15", GameType.WHAC, 15),
+    Quest("Familjesekvens", "Härma ordningen släkten lyser upp i", GameType.SEQUENCE, 6),
     Quest("Klappa Farmor", "120 klapp på 22 sekunder. Kör!", GameType.TAP, 120),
-    Quest("Dubbel öl", "Strålen svänger snabbare nu. Fyll glaset igen", GameType.BEER, 2),
     Quest("Familje-Ninja", "Svep sönder släkten som flyger upp — 15 träffar", GameType.NINJA, 15),
-    Quest("Minnesmästaren", "Två svårare minnesnivåer på raken", GameType.MEMORY, 2),
-    Quest("Whac-kaos", "Släkten poppar snabbare. Nå 18", GameType.WHAC, 18),
-    Quest("Sekvenskung", "Klara en sekvens på 7 i rad", GameType.SEQUENCE, 7),
-    Quest("Sista skålen", "Full fart på strålen. Fyll den sista ölen", GameType.BEER, 3),
     Quest("Spring 5 km", "Visa Strava-bevis och få hemliga koden av festfixaren", GameType.GATE, 0),
 )
 
@@ -301,7 +297,15 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                         contentAlignment = Alignment.Center,
                     ) {
                         when {
-                            completed -> Text("✓", fontSize = 32.sp, fontWeight = FontWeight.Black, color = Color(0xFF14203A))
+                            // completed: keep the number, dark ink on the green node,
+                            // with a small check badge so "done" still reads at a glance
+                            completed -> Text(
+                                "%02d".format(i + 1),
+                                fontSize = 26.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF14203A),
+                            )
                             active -> Text(
                                 "%02d".format(i + 1),
                                 fontSize = 26.sp,
@@ -310,6 +314,16 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
                                 color = MaterialTheme.colorScheme.onPrimary,
                             )
                             else -> Icon(Icons.Outlined.Lock, "Låst", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        // small "done" check badge in the corner of completed nodes
+                        if (completed) {
+                            Box(
+                                Modifier.align(Alignment.TopEnd).padding(6.dp)
+                                    .size(22.dp).clip(CircleShape).background(Color(0xFF14203A)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("✓", fontSize = 13.sp, fontWeight = FontWeight.Black, color = green)
+                            }
                         }
                     }
                     Text(

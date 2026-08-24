@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 6
+private const val APP_VERSION = 7
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -149,9 +149,15 @@ fun JonisApp() {
 
 private suspend fun fetchLatestVersion(): Pair<Int, String>? = withContext(Dispatchers.IO) {
     try {
-        val conn = (URL(VERSION_URL).openConnection() as HttpURLConnection).apply {
+        // unique query param + no-cache defeat GitHub's 5-min raw CDN cache
+        // (cache-control: max-age=300), so a freshly released version.json is
+        // seen immediately instead of up to 5 minutes late
+        val url = URL("$VERSION_URL?t=${System.currentTimeMillis()}")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = 4000
             readTimeout = 4000
+            useCaches = false
+            setRequestProperty("Cache-Control", "no-cache")
         }
         conn.inputStream.bufferedReader().use {
             val json = JSONObject(it.readText())

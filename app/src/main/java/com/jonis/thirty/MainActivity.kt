@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 22
+private const val APP_VERSION = 23
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -121,10 +121,10 @@ fun JonisApp() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("jonis", Context.MODE_PRIVATE) }
     var selected by remember { mutableStateOf<Int?>(null) }
-    // clamp saved progress to the current quest count — an older build may have
-    // stored a higher value than the (now shorter) list, which would leave every
-    // node "completed" and none tappable
-    var unlocked by remember { mutableIntStateOf(prefs.getInt("unlocked", 1).coerceIn(1, quests.size)) }
+    // Fresh installs start with nodes 1–8 unlocked (through "Farmor Hoppar", index 7 →
+    // unlocked = 8) so a reinstall doesn't lose all progress. Existing saves keep theirs.
+    // Clamp guards against a stored value larger than the current quest list.
+    var unlocked by remember { mutableIntStateOf(prefs.getInt("unlocked", 8).coerceIn(1, quests.size)) }
     var updateUrl by remember { mutableStateOf<String?>(null) }
     // chosen play-style ("MINI" or "IRL"); null until picked on first launch. Drives the
     // post-node-10 path (nodes 11+) once that content is designed.

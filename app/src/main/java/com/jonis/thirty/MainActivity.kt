@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 10
+private const val APP_VERSION = 11
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -89,7 +89,7 @@ private val quests = listOf(
     Quest("Familjesekvens", "Härma ordningen släkten lyser upp i", GameType.SEQUENCE, 6),
     Quest("Klappa Farmor", "120 klapp på 22 sekunder. Kör!", GameType.TAP, 120),
     Quest("Familje-Ninja", "Svep sönder släkten som flyger upp — 15 träffar", GameType.NINJA, 15),
-    Quest("Släkttornet", "Släpp släkten i en hög — pricka mitten. Stapla 8", GameType.STACK, 8),
+    Quest("Släkttornet", "Släpp släkten i en hög — pricka mitten. Stapla 10", GameType.STACK, 10),
     Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten. Klättra 25", GameType.JUMP, 25),
     Quest("Spring 5 km", "Visa Strava-bevis och få hemliga koden av festfixaren", GameType.GATE, 0),
 )
@@ -465,10 +465,9 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
     val drainRate = 0.24f
     val catchWidth = 0.10f
 
+    val ink = MaterialTheme.colorScheme.onSurface   // theme-aware outline/text now there's no dark backdrop
     BoxWithConstraints(
         Modifier.fillMaxSize()
-            .clip(RoundedCornerShape(20.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFF243B66), Color(0xFF14203A))))
             // direct control: Pappa snaps to wherever you touch/drag horizontally
             .pointerInput(Unit) {
                 detectDragGestures { change, _ ->
@@ -567,7 +566,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
                 )
                 // glass outline
                 drawRoundRect(
-                    color = Color.White,
+                    color = ink,
                     topLeft = Offset(mugCx - mugW / 2, mugTop),
                     size = Size(mugW, mugH),
                     cornerRadius = CornerRadius(14f, 14f),
@@ -575,7 +574,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
                 )
                 // handle
                 drawArc(
-                    color = Color.White,
+                    color = ink,
                     startAngle = -70f,
                     sweepAngle = 220f,
                     useCenter = false,
@@ -590,7 +589,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
         Column(Modifier.align(Alignment.TopCenter).padding(top = 12.dp).fillMaxWidth(0.7f)) {
             Text(
                 "GLAS: ${(fill * 100).toInt()}%",
-                color = Color.White,
+                color = ink,
                 fontWeight = FontWeight.Black,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
@@ -599,7 +598,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
                 { fill },
                 Modifier.fillMaxWidth().height(14.dp).padding(top = 6.dp),
                 color = Color(0xFFE8A317),
-                trackColor = Color(0x33FFFFFF),
+                trackColor = ink.copy(alpha = 0.2f),
                 strokeCap = StrokeCap.Round,
             )
         }
@@ -653,7 +652,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
 
         Text(
             "Tryck/dra för att flytta Pappa",
-            color = Color(0xCCFFFFFF),
+            color = ink.copy(alpha = 0.8f),
             fontSize = 12.sp,
             modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
         )
@@ -1145,13 +1144,13 @@ private class Slab(val left: Float, val width: Float, val face: Int)
 private fun StackGame(target: Int, onWin: () -> Unit) {
     val density = LocalDensity.current
     BoxWithConstraints(
-        Modifier.fillMaxSize()
-            .clip(RoundedCornerShape(20.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFF10233F), Color(0xFF071324)))),
+        Modifier.fillMaxSize(),   // no background — blocks stack over the screen itself
     ) {
         val wpx = with(density) { maxWidth.toPx() }
         val hpx = with(density) { maxHeight.toPx() }
-        val blockH = with(density) { 52.dp.toPx() }
+        // square blocks: the base is a square, so block height == the starting block width
+        val baseSide = wpx * 0.36f
+        val blockH = baseSide
         val bottomPad = with(density) { 12.dp.toPx() }
 
         val placed = remember { mutableStateListOf<Slab>() }
@@ -1166,9 +1165,8 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
         // (re)start — declared first so it fully initialises before the slide loop runs
         LaunchedEffect(restart) {
             placed.clear()
-            val baseW = wpx * 0.42f
-            placed.add(Slab((wpx - baseW) / 2f, baseW, Random.nextInt(faces.size)))
-            movingWidth = baseW
+            placed.add(Slab((wpx - baseSide) / 2f, baseSide, Random.nextInt(faces.size)))
+            movingWidth = baseSide
             movingFace = Random.nextInt(faces.size)
             movingLeft = 0f
             dir = 1
@@ -1182,7 +1180,7 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
                 val now = withFrameNanos { it }
                 if (last != 0L && !failed) {
                     val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
-                    val sp = wpx * (0.55f + (placed.size - 1) * 0.04f).coerceAtMost(1.7f)
+                    val sp = wpx * (0.95f + (placed.size - 1) * 0.09f).coerceAtMost(3.0f)
                     movingLeft += dir * sp * dt
                     if (movingLeft <= 0f) { movingLeft = 0f; dir = 1 }
                     if (movingLeft + movingWidth >= wpx) { movingLeft = wpx - movingWidth; dir = -1 }
@@ -1221,7 +1219,7 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
                         .offset { IntOffset(s.left.toInt(), topY.toInt()) }
                         .size(with(density) { s.width.toDp() }, with(density) { blockH.toDp() })
                         .clip(RoundedCornerShape(6.dp))
-                        .border(2.dp, Color.White, RoundedCornerShape(6.dp)),
+                        .border(2.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(6.dp)),
                 ) {
                     Image(
                         painterResource(faces[s.face].first), faces[s.face].second,
@@ -1250,8 +1248,8 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
 
         Text(
             "TORN: ${(placed.size - 1).coerceAtLeast(0)} / $target",
-            color = Color.White, fontWeight = FontWeight.Black, fontSize = 20.sp,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+            color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 20.sp,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
         )
         if (perfectFlash) {
             Text(
@@ -1261,12 +1259,12 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
         }
         if (!failed) {
             Text(
-                "Tryck för att släppa", color = Color(0xCCFFFFFF), fontSize = 12.sp,
+                "Tryck för att släppa", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
             )
         } else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Rasade! ${(placed.size - 1).coerceAtLeast(0)}/$target", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("Rasade! ${(placed.size - 1).coerceAtLeast(0)}/$target", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
                 Button(onClick = { restart++ }, modifier = Modifier.padding(top = 10.dp)) { Text("Försök igen") }
             }
         }
@@ -1287,17 +1285,13 @@ private fun spawnPlat(y: Float, wpx: Float, platW: Float, kind: Int): Plat =
 @Composable
 private fun JumperGame(target: Int, onWin: () -> Unit) {
     val density = LocalDensity.current
-    BoxWithConstraints(
-        Modifier.fillMaxSize()
-            .clip(RoundedCornerShape(20.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFF12324A), Color(0xFF0A1626)))),
-    ) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {   // no background — plays over the screen itself
         val wpx = with(density) { maxWidth.toPx() }
         val hpx = with(density) { maxHeight.toPx() }
         val playerSz = with(density) { 66.dp.toPx() }
         val platW = with(density) { 86.dp.toPx() }
         val platH = with(density) { 18.dp.toPx() }
-        val spacing = with(density) { 112.dp.toPx() }
+        val spacing = with(density) { 108.dp.toPx() }
         val obstSz = with(density) { 60.dp.toPx() }
 
         var px by remember { mutableFloatStateOf(wpx / 2f) }
@@ -1366,18 +1360,18 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
                         if (o.x > wpx - obstSz / 2) o.vx = -abs(o.vx)
                         if (hypot(px - o.x, py - o.y) < (playerSz + obstSz) * 0.32f) failed = true
                     }
-                    // generate platforms above; sparser + obstacles as the climb gets higher
+                    // generate platforms above; sparser + more obstacles as the climb gets higher
                     while (topGen > camY - spacing) {
-                        topGen -= spacing * (0.85f + Random.nextFloat() * 0.5f + (score * 0.01f).coerceAtMost(0.6f))
+                        topGen -= spacing * (0.95f + Random.nextFloat() * 0.65f + (score * 0.02f).coerceAtMost(1.0f))
                         val kind = when {
-                            score > 6 && Random.nextFloat() < 0.18f -> 1
-                            score > 3 && Random.nextFloat() < 0.14f -> 2
+                            score > 4 && Random.nextFloat() < 0.24f -> 1     // breaking (earlier + more)
+                            score > 2 && Random.nextFloat() < 0.16f -> 2
                             else -> 0
                         }
                         val p = spawnPlat(topGen, wpx, platW, kind)
-                        if (kind == 0 && Random.nextFloat() < 0.12f) p.boot = true
+                        if (kind == 0 && Random.nextFloat() < 0.10f) p.boot = true
                         plats.add(p)
-                        if (score > 8 && Random.nextFloat() < 0.22f) {
+                        if (score > 4 && Random.nextFloat() < 0.30f) {
                             obstacles.add(
                                 Obst(
                                     x = wpx * (0.2f + 0.6f * Random.nextFloat()),
@@ -1453,17 +1447,17 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
 
         Text(
             "HÖJD: $score / $target",
-            color = Color.White, fontWeight = FontWeight.Black, fontSize = 20.sp,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+            color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 20.sp,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
         )
         if (!failed) {
             Text(
-                "Dra i sidled för att styra", color = Color(0xCCFFFFFF), fontSize = 12.sp,
+                "Dra i sidled för att styra", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
             )
         } else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Farmor ramlade! $score/$target", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("Farmor ramlade! $score/$target", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
                 Button(onClick = { restart++ }, modifier = Modifier.padding(top = 10.dp)) { Text("Försök igen") }
             }
         }

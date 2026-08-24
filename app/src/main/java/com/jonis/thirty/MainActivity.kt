@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 23
+private const val APP_VERSION = 24
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -91,7 +91,7 @@ private val quests = listOf(
     Quest("Klappa Farmor", "Klappa Farmor — slå 170 på tiden!", GameType.TAP, 170),
     Quest("Familje-Ninja", "Svep släkten, undvik bomben — slå 100", GameType.NINJA, 100),
     Quest("Släkttornet", "Släpp släkten i en hög — stapla 10", GameType.STACK, 10),
-    Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten — nå 80", GameType.JUMP, 80),
+    Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten — nå 55", GameType.JUMP, 55),
     Quest("Farmor i mörkret", "Farmor har gått vilse i en mörk labyrint! Hjälp henne hitta ut.", GameType.MAZE, 0),
     Quest("Presenten 🎁", "En budget för godis väntar — skicka bildbevis", GameType.GATE, 0),
 ) + List(20) { Quest("???", "Kommer snart", GameType.LOCKED, 0) }

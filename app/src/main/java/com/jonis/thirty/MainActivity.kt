@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 16
+private const val APP_VERSION = 17
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -1604,16 +1604,19 @@ private fun MazeGame(onWin: () -> Unit) {
     val exitX = cols - 1
     val exitY = rows - 1
 
-    val wallColor = Color(0xFF6DE0FF)
-    val litFloor = MaterialTheme.colorScheme.surfaceVariant
+    val wallColor = Color(0xFF63E6FF)
+    val floorColor = MaterialTheme.colorScheme.surfaceVariant
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wpx = with(density) { maxWidth.toPx() }
         val hpx = with(density) { maxHeight.toPx() }
-        val cell = minOf(wpx / cols, hpx / rows)
-        val originX = (wpx - cell * cols) / 2f
-        val originY = (hpx - cell * rows) / 2f
-        val visionR = 2.3f
+        // zoomed in: only ~5 cells fit across, the rest of the maze lives off-screen
+        val cell = minOf(wpx, hpx) / 5f
+        val visionR = 2.4f
+
+        // camera glides so Farmor stays centred; the maze scrolls around her (Pac-Man style)
+        val camX by animateFloatAsState((fx + 0.5f) * cell - wpx / 2f, label = "camx")
+        val camY by animateFloatAsState((fy + 0.5f) * cell - hpx / 2f, label = "camy")
 
         fun tryMove(dx: Int, dy: Int) {
             if (won) return
@@ -1637,7 +1640,7 @@ private fun MazeGame(onWin: () -> Unit) {
             Modifier.fillMaxSize().pointerInput(restart) {
                 detectDragGestures(onDragEnd = { accX = 0f; accY = 0f }) { _, drag ->
                     accX += drag.x; accY += drag.y
-                    val thresh = cell * 0.5f
+                    val thresh = cell * 0.42f
                     if (abs(accX) > abs(accY)) {
                         if (accX > thresh) { tryMove(1, 0); accX = 0f; accY = 0f }
                         else if (accX < -thresh) { tryMove(-1, 0); accX = 0f; accY = 0f }
@@ -1649,37 +1652,52 @@ private fun MazeGame(onWin: () -> Unit) {
             },
         ) {
             drawRect(Color(0xFF05070D))   // fog of war — you only see near Farmor
+            // 1) continuous floor for lit cells — no per-cell borders, so open corridors merge
             for (x in 0 until cols) for (y in 0 until rows) {
                 val dist = hypot((x - fx).toFloat(), (y - fy).toFloat())
                 if (dist > visionR + 1f) continue
                 val a = if (dist <= visionR) 1f else (visionR + 1f - dist).coerceIn(0f, 1f)
-                val left = originX + x * cell
-                val top = originY + y * cell
+                val sx = x * cell - camX
+                val sy = y * cell - camY
                 val isExit = x == exitX && y == exitY
                 drawRect(
-                    color = (if (isExit) Color(0xFF7CFF6B) else litFloor).copy(alpha = a * 0.9f),
-                    topLeft = Offset(left + 1f, top + 1f),
-                    size = Size(cell - 2f, cell - 2f),
+                    color = (if (isExit) Color(0xFF64FF57) else floorColor).copy(alpha = a * 0.92f),
+                    topLeft = Offset(sx, sy),
+                    size = Size(cell, cell),
                 )
+            }
+            // 2) thick bright walls on top — the ONLY lines drawn, so they stand out clearly
+            val sw = cell * 0.14f
+            for (x in 0 until cols) for (y in 0 until rows) {
+                val dist = hypot((x - fx).toFloat(), (y - fy).toFloat())
+                if (dist > visionR + 1f) continue
+                val a = if (dist <= visionR) 1f else (visionR + 1f - dist).coerceIn(0f, 1f)
+                val sx = x * cell - camX
+                val sy = y * cell - camY
                 val c = maze[x][y]
                 val w = wallColor.copy(alpha = a)
-                val sw = (cell * 0.12f).coerceAtLeast(3f)
-                if (c.top) drawLine(w, Offset(left, top), Offset(left + cell, top), sw)
-                if (c.bottom) drawLine(w, Offset(left, top + cell), Offset(left + cell, top + cell), sw)
-                if (c.left) drawLine(w, Offset(left, top), Offset(left, top + cell), sw)
-                if (c.right) drawLine(w, Offset(left + cell, top), Offset(left + cell, top + cell), sw)
+                if (c.top) drawLine(w, Offset(sx, sy), Offset(sx + cell, sy), sw, cap = StrokeCap.Round)
+                if (c.bottom) drawLine(w, Offset(sx, sy + cell), Offset(sx + cell, sy + cell), sw, cap = StrokeCap.Round)
+                if (c.left) drawLine(w, Offset(sx, sy), Offset(sx, sy + cell), sw, cap = StrokeCap.Round)
+                if (c.right) drawLine(w, Offset(sx + cell, sy), Offset(sx + cell, sy + cell), sw, cap = StrokeCap.Round)
             }
         }
 
-        // Farmor rides on top of the maze at her current cell
+        // Farmor — big, glides with the camera toward the centre of the screen
+        val fSize = cell * 0.7f
         Image(
             painterResource(R.drawable.farmor1), "Farmor",
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .offset { IntOffset((originX + fx * cell + cell * 0.12f).toInt(), (originY + fy * cell + cell * 0.12f).toInt()) }
-                .size(with(density) { (cell * 0.76f).toDp() })
+                .offset {
+                    IntOffset(
+                        ((fx + 0.5f) * cell - camX - fSize / 2f).toInt(),
+                        ((fy + 0.5f) * cell - camY - fSize / 2f).toInt(),
+                    )
+                }
+                .size(with(density) { fSize.toDp() })
                 .clip(CircleShape)
-                .border(3.dp, Color(0xFFFFC107), CircleShape),
+                .border(4.dp, Color(0xFFFFC107), CircleShape),
         )
 
         Text(

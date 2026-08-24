@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 9
+private const val APP_VERSION = 10
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -1005,15 +1005,12 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
     var score by remember { mutableIntStateOf(0) }
     var failed by remember { mutableStateOf(false) }
     var restart by remember { mutableIntStateOf(0) }
-    var tick by remember { mutableIntStateOf(0) }
+    var frame by remember { mutableIntStateOf(0) }   // bumped every physics tick to drive re-layout
     val flyers = remember { mutableStateListOf<Flyer>() }
-    val sizePx = with(density) { 82.dp.toPx() }
+    val sizePx = with(density) { 88.dp.toPx() }
 
-    BoxWithConstraints(
-        Modifier.fillMaxSize()
-            .clip(RoundedCornerShape(20.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFF16263F), Color(0xFF090E18)))),
-    ) {
+    // no background of its own — the round arcs float over the screen's own background
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         val w = with(density) { maxWidth.toPx() }
         val h = with(density) { maxHeight.toPx() }
 
@@ -1022,29 +1019,28 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
             score = 0
             failed = false
             var last = 0L
-            var sinceSpawn = 0.4f
-            val gravity = h * 1.15f
+            var sinceSpawn = 1f
+            val gravity = h * 2.0f
             while (score < target && !failed) {
                 val now = withFrameNanos { it }
                 if (last != 0L) {
                     val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.033f)
                     sinceSpawn += dt
-                    // spawn faster as the score climbs
-                    val interval = (0.95f - score * 0.02f).coerceAtLeast(0.5f)
+                    val interval = (1.0f - score * 0.02f).coerceAtLeast(0.55f)
                     if (sinceSpawn >= interval) {
                         sinceSpawn = 0f
-                        val startX = w * (0.18f + 0.64f * Random.nextFloat())
-                        // launch upward; gravity arcs it back down through the screen.
-                        // vx biases toward the centre so it sweeps across the play area.
+                        val startX = w * (0.2f + 0.6f * Random.nextFloat())
+                        // strong upward launch so the arc peaks near the top of the screen;
+                        // gravity (2*h) then pulls it back down. vx sweeps it across the area.
                         flyers.add(
                             Flyer(
                                 x = startX, y = h + sizePx * 0.5f,
-                                vx = (w * 0.5f - startX) / 1.3f + (Random.nextFloat() - 0.5f) * w * 0.22f,
-                                vy = -h * (1.18f + Random.nextFloat() * 0.16f),
+                                vx = (w * 0.5f - startX) * 0.9f + (Random.nextFloat() - 0.5f) * w * 0.2f,
+                                vy = -h * (1.9f + Random.nextFloat() * 0.2f),
                                 face = Random.nextInt(faces.size),
-                                bomb = score >= 4 && Random.nextFloat() < 0.22f,
+                                bomb = score >= 4 && Random.nextFloat() < 0.2f,
                                 rot = Random.nextFloat() * 360f,
-                                vrot = (Random.nextFloat() - 0.5f) * 320f,
+                                vrot = (Random.nextFloat() - 0.5f) * 300f,
                             ),
                         )
                     }
@@ -1055,10 +1051,10 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
                         f.y += f.vy * dt
                         f.vy += gravity * dt
                         f.rot += f.vrot * dt
-                        if (f.y > h + sizePx * 1.5f) f.alive = false
+                        if (f.y > h + sizePx * 2f) f.alive = false
                     }
                     flyers.removeAll { !it.alive || it.sliced }
-                    tick++
+                    frame++
                 }
                 last = now
             }
@@ -1069,14 +1065,10 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
             Modifier.fillMaxSize().pointerInput(restart) {
                 detectDragGestures { change, _ ->
                     val p = change.position
-                    // iterate a snapshot and ONLY set flags; the physics loop removes
-                    // sliced flyers, avoiding concurrent structural modification.
-                    // only sliceable while genuinely on-screen — stops phantom hits
-                    // at the launch point below the bottom edge
+                    // snapshot + flag-only; the physics loop does the removal
                     for (f in flyers.toList()) {
                         if (f.alive && !f.sliced &&
-                            f.y > sizePx * 0.3f && f.y < h - sizePx * 0.1f &&
-                            hypot(p.x - f.x, p.y - f.y) < sizePx * 0.7f
+                            hypot(p.x - f.x, p.y - f.y) < sizePx * 0.72f
                         ) {
                             f.sliced = true
                             if (f.bomb) failed = true else score++
@@ -1085,38 +1077,39 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
                 }
             },
         ) {
-            // read the frame tick in the SAME scope that emits the Images so the
-            // offset/rotation lambdas below are re-evaluated every physics frame
-            tick
             flyers.forEach { f ->
-                key(f) {
-                    if (f.alive && !f.sliced) {
-                        if (f.bomb) {
-                            Box(
-                                Modifier
-                                    .offset { IntOffset((f.x - sizePx / 2).toInt(), (f.y - sizePx / 2).toInt()) }
-                                    .size(with(density) { sizePx.toDp() })
-                                    .graphicsLayer { rotationZ = f.rot }
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF181818))
-                                    .border(4.dp, Color(0xFFFF5252), CircleShape),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text("💣", fontSize = 34.sp)
-                            }
-                        } else {
-                            Image(
-                                painterResource(faces[f.face].first),
-                                faces[f.face].second,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .offset { IntOffset((f.x - sizePx / 2).toInt(), (f.y - sizePx / 2).toInt()) }
-                                    .size(with(density) { sizePx.toDp() })
-                                    .graphicsLayer { rotationZ = f.rot }
-                                    .clip(CircleShape)
-                                    .border(3.dp, Color.White, CircleShape),
-                            )
+                if (f.alive && !f.sliced) {
+                    // reading `frame` inside the placement lambda re-runs it every physics
+                    // tick, so the round follows f.x/f.y (plain vars) smoothly up the screen
+                    val place: androidx.compose.ui.unit.Density.() -> IntOffset = {
+                        frame
+                        IntOffset((f.x - sizePx / 2).toInt(), (f.y - sizePx / 2).toInt())
+                    }
+                    if (f.bomb) {
+                        Box(
+                            Modifier
+                                .offset(place)
+                                .size(with(density) { sizePx.toDp() })
+                                .graphicsLayer { rotationZ = f.rot }
+                                .clip(CircleShape)
+                                .background(Color(0xFF181818))
+                                .border(4.dp, Color(0xFFFF5252), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("💣", fontSize = 36.sp)
                         }
+                    } else {
+                        Image(
+                            painterResource(faces[f.face].first),
+                            faces[f.face].second,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .offset(place)
+                                .size(with(density) { sizePx.toDp() })
+                                .graphicsLayer { rotationZ = f.rot }
+                                .clip(CircleShape)
+                                .border(3.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                        )
                     }
                 }
             }
@@ -1124,21 +1117,20 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
 
         Text(
             "SVEP: $score / $target",
-            color = Color.White,
             fontWeight = FontWeight.Black,
             fontSize = 20.sp,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
         )
         if (!failed) {
             Text(
                 "Svep släkten — undvik bomben 💣",
-                color = Color(0xCCFFFFFF),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
             )
         } else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("BOM! 💥 Du svepte en bomb", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("BOM! 💥 Du svepte en bomb", fontWeight = FontWeight.Bold)
                 Button(onClick = { restart++ }, modifier = Modifier.padding(top = 10.dp)) { Text("Försök igen") }
             }
         }

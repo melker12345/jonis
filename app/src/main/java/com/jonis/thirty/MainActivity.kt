@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 11
+private const val APP_VERSION = 12
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -415,6 +415,25 @@ private fun WinOverlay(onContinue: () -> Unit) {
     }
 }
 
+// End-of-round panel for the "play to your max" games: shows the achieved score
+// and lets you replay for a better run or continue. (Targets to beat come later.)
+@Composable
+private fun ScorePanel(score: Int, onRetry: () -> Unit, onContinue: () -> Unit) {
+    Column(
+        Modifier
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), RoundedCornerShape(18.dp))
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("DIN POÄNG", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("$score", fontSize = 60.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+        Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onRetry) { Text("Försök igen") }
+            Button(onClick = onContinue) { Text("Fortsätt →", fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
 // ---------- Real-life challenge gate ----------
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -667,73 +686,96 @@ private fun WhacGame(target: Int, onWin: () -> Unit) {
     var active by remember { mutableIntStateOf(-1) }
     var whoFace by remember { mutableIntStateOf(0) }
     var bonkCell by remember { mutableIntStateOf(-1) }
+    var timeLeft by remember { mutableFloatStateOf(30f) }
+    var ended by remember { mutableStateOf(false) }
+    var restart by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(target) {
-        score = 0
-        while (score < target) {
+    // fixed-length round — play to your max; the score is however many you hit
+    LaunchedEffect(restart) {
+        score = 0; timeLeft = 30f; ended = false
+        var last = 0L
+        while (timeLeft > 0f) {
+            val now = withFrameNanos { it }
+            if (last != 0L) timeLeft -= (now - last) / 1_000_000_000f
+            last = now
+        }
+        active = -1
+        ended = true
+    }
+
+    // pop the family up one cell at a time until the timer ends; gets quicker as you score
+    LaunchedEffect(restart) {
+        while (!ended) {
             active = Random.nextInt(9)
             whoFace = Random.nextInt(faces.size)
-            val upMs = (720L - score * 22L).coerceAtLeast(360L)
+            val upMs = (720L - score * 12L).coerceAtLeast(320L)
             delay(upMs)
             active = -1
-            delay(180L)
+            delay(150L)
         }
-        onWin()
     }
 
     // clear the transient bonk graphic shortly after a hit
     LaunchedEffect(bonkCell) { if (bonkCell >= 0) { delay(320L); bonkCell = -1 } }
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("TRÄFFAR: $score / $target", fontWeight = FontWeight.Black, fontSize = 20.sp)
-        Spacer(Modifier.height(16.dp))
-        for (row in 0 until 3) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-                for (col in 0 until 3) {
-                    val cell = row * 3 + col
-                    val isUp = active == cell
-                    Box(
-                        Modifier.size(96.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable(enabled = isUp) {
-                                if (active == cell) {
-                                    score++
-                                    active = -1
-                                    bonkCell = cell
-                                }
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (isUp) {
-                            Image(
-                                painterResource(faces[whoFace].first),
-                                faces[whoFace].second,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)),
-                            )
-                        } else {
-                            Text("🕳", fontSize = 30.sp)
-                        }
-                        // transient bonk burst, overlaid so it never shifts layout
-                        if (bonkCell == cell) {
-                            var grown by remember { mutableStateOf(false) }
-                            LaunchedEffect(Unit) { grown = true }
-                            val pop by animateFloatAsState(if (grown) 1.3f else 0.4f, label = "bonk")
-                            Text(
-                                "💥",
-                                fontSize = 46.sp,
-                                modifier = Modifier.graphicsLayer {
-                                    scaleX = pop
-                                    scaleY = pop
-                                    alpha = (1.6f - pop).coerceIn(0f, 1f)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("TRÄFFAR: $score", fontWeight = FontWeight.Black, fontSize = 22.sp)
+            Text(
+                "Tid: ${timeLeft.coerceAtLeast(0f).toInt()}s",
+                fontWeight = FontWeight.Bold,
+                color = if (timeLeft < 6f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(14.dp))
+            for (row in 0 until 3) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                    for (col in 0 until 3) {
+                        val cell = row * 3 + col
+                        val isUp = active == cell
+                        Box(
+                            Modifier.size(96.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable(enabled = isUp && !ended) {
+                                    if (active == cell) {
+                                        score++
+                                        active = -1
+                                        bonkCell = cell
+                                    }
                                 },
-                            )
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (isUp) {
+                                Image(
+                                    painterResource(faces[whoFace].first),
+                                    faces[whoFace].second,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)),
+                                )
+                            } else {
+                                Text("🕳", fontSize = 30.sp)
+                            }
+                            // transient bonk burst, overlaid so it never shifts layout
+                            if (bonkCell == cell) {
+                                var grown by remember { mutableStateOf(false) }
+                                LaunchedEffect(Unit) { grown = true }
+                                val pop by animateFloatAsState(if (grown) 1.3f else 0.4f, label = "bonk")
+                                Text(
+                                    "💥",
+                                    fontSize = 46.sp,
+                                    modifier = Modifier.graphicsLayer {
+                                        scaleX = pop
+                                        scaleY = pop
+                                        alpha = (1.6f - pop).coerceIn(0f, 1f)
+                                    },
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+        if (ended) ScorePanel(score, onRetry = { restart++ }, onContinue = onWin)
     }
 }
 
@@ -840,7 +882,7 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
     var flashCell by remember { mutableIntStateOf(-1) }
     var inputPos by remember { mutableIntStateOf(0) }
     var round by remember { mutableIntStateOf(0) }   // bump to replay the sequence
-    var wrong by remember { mutableStateOf(false) }
+    var ended by remember { mutableStateOf(false) }
     var pressCell by remember { mutableIntStateOf(-1) }      // last tapped cell
     var pressOk by remember { mutableStateOf(true) }         // was that press correct?
 
@@ -858,39 +900,41 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
     }
 
     fun tap(cell: Int) {
-        if (showing) return
+        if (showing || ended) return
         pressCell = cell
         if (cell == seq[inputPos]) {
             pressOk = true
             inputPos++
-            if (inputPos == seq.size) {
-                if (seq.size >= target) { onWin() }
-                else { seq.add(Random.nextInt(9)); round++ }
-            }
+            // no target — the sequence keeps growing until you slip
+            if (inputPos == seq.size) { seq.add(Random.nextInt(9)); round++ }
         } else {
             pressOk = false
-            wrong = true
-            seq.clear(); seq.add(Random.nextInt(9)); round++
+            ended = true
         }
     }
 
-    LaunchedEffect(wrong) { if (wrong) { delay(700); wrong = false } }
+    fun retry() {
+        seq.clear(); seq.add(Random.nextInt(9))
+        inputPos = 0; ended = false; pressOk = true; pressCell = -1; round++
+    }
+
     // clear the transient press highlight; the key includes both cell and round
     // so consecutive taps on the same tile still re-trigger the pop
     LaunchedEffect(pressCell, inputPos, round) { if (pressCell >= 0) { delay(240L); pressCell = -1 } }
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("LÄNGD: ${seq.size} / $target", fontWeight = FontWeight.Black, fontSize = 20.sp)
-        Text(
-            if (wrong) "Fel! Börjar om…" else if (showing) "Titta noga…" else "Din tur — härma ordningen",
-            fontSize = 12.sp,
-            color = if (wrong) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(16.dp))
-        for (row in 0 until 3) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-                for (col in 0 until 3) {
-                    val cell = row * 3 + col
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("LÄNGD: ${seq.size}", fontWeight = FontWeight.Black, fontSize = 20.sp)
+            Text(
+                if (showing) "Titta noga…" else "Din tur — härma ordningen",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(16.dp))
+            for (row in 0 until 3) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                    for (col in 0 until 3) {
+                        val cell = row * 3 + col
                     val lit = flashCell == cell
                     val rot by animateFloatAsState(if (lit) 180f else 0f, label = "flip")
                     val pressed = pressCell == cell
@@ -907,7 +951,7 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
                                 if (pressed) Modifier.border(5.dp, ringColor, RoundedCornerShape(16.dp))
                                 else Modifier,
                             )
-                            .clickable(enabled = !showing) { tap(cell) },
+                            .clickable(enabled = !showing && !ended) { tap(cell) },
                         contentAlignment = Alignment.Center,
                     ) {
                         if (rot < 90f) {
@@ -936,6 +980,8 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
                 }
             }
         }
+        }
+        if (ended) ScorePanel(seq.size - 1, onRetry = { retry() }, onContinue = onWin)
     }
 }
 
@@ -945,47 +991,45 @@ private fun SequenceGame(target: Int, onWin: () -> Unit) {
 private fun TapGame(target: Int, onWin: () -> Unit) {
     var taps by remember { mutableIntStateOf(0) }
     var timeLeft by remember { mutableFloatStateOf(22f) }
-    var failed by remember { mutableStateOf(false) }
+    var ended by remember { mutableStateOf(false) }
+    var restart by remember { mutableIntStateOf(0) }
     var bump by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
+    // tap as much as you can until the timer runs out — score is your tap count
+    LaunchedEffect(restart) {
+        taps = 0; timeLeft = 22f; ended = false
         var last = 0L
-        while (timeLeft > 0f && taps < target) {
+        while (timeLeft > 0f) {
             val now = withFrameNanos { it }
             if (last != 0L) timeLeft -= (now - last) / 1_000_000_000f
             last = now
         }
-        if (taps >= target) onWin() else failed = true
+        ended = true
     }
 
     LaunchedEffect(bump) { if (bump) { delay(70); bump = false } }
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("KLAPP: $taps / $target", fontWeight = FontWeight.Black, fontSize = 24.sp)
-        Text("Tid: ${timeLeft.coerceAtLeast(0f).toInt()}s", fontWeight = FontWeight.Bold, color = if (timeLeft < 6f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(20.dp))
-        Image(
-            painterResource(R.drawable.farmor),
-            "Farmor",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(if (bump) 210.dp else 220.dp)
-                .clip(CircleShape)
-                .border(6.dp, Color(0xFFD7FF45), CircleShape)
-                .clickable(enabled = !failed && timeLeft > 0f) {
-                    taps++; bump = true
-                    if (taps >= target) onWin()
-                },
-        )
-        Spacer(Modifier.height(18.dp))
-        if (failed) {
-            Text("Tiden ute! ${taps}/$target", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-            Button(onClick = { taps = 0; timeLeft = 22f; failed = false }, modifier = Modifier.padding(top = 10.dp)) {
-                Text("Försök igen")
-            }
-        } else {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("KLAPP: $taps", fontWeight = FontWeight.Black, fontSize = 26.sp)
+            Text("Tid: ${timeLeft.coerceAtLeast(0f).toInt()}s", fontWeight = FontWeight.Bold, color = if (timeLeft < 6f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(20.dp))
+            Image(
+                painterResource(R.drawable.farmor),
+                "Farmor",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(if (bump) 210.dp else 220.dp)
+                    .clip(CircleShape)
+                    .border(6.dp, Color(0xFFD7FF45), CircleShape)
+                    .clickable(enabled = !ended && timeLeft > 0f) {
+                        taps++; bump = true
+                    },
+            )
+            Spacer(Modifier.height(18.dp))
             Text("KLAPPA FARMOR!", fontWeight = FontWeight.Black, fontSize = 16.sp)
         }
+        if (ended) ScorePanel(taps, onRetry = { restart++ }, onContinue = onWin)
     }
 }
 
@@ -1020,7 +1064,7 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
             var last = 0L
             var sinceSpawn = 1f
             val gravity = h * 2.0f
-            while (score < target && !failed) {
+            while (!failed) {   // endless — play until you slice a bomb
                 val now = withFrameNanos { it }
                 if (last != 0L) {
                     val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.033f)
@@ -1057,7 +1101,6 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
                 }
                 last = now
             }
-            if (score >= target) onWin()
         }
 
         Box(
@@ -1115,7 +1158,7 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
         }
 
         Text(
-            "SVEP: $score / $target",
+            "SVEP: $score",
             fontWeight = FontWeight.Black,
             fontSize = 20.sp,
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
@@ -1129,8 +1172,8 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
             )
         } else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("BOM! 💥 Du svepte en bomb", fontWeight = FontWeight.Bold)
-                Button(onClick = { restart++ }, modifier = Modifier.padding(top = 10.dp)) { Text("Försök igen") }
+                Text("BOM! 💥", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
+                ScorePanel(score, onRetry = { restart++ }, onContinue = onWin)
             }
         }
     }
@@ -1200,7 +1243,7 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
             if (overlap <= wpx * 0.02f) { failed = true; return }   // missed the stack
             if (abs(movingLeft - top.left) < wpx * 0.03f) perfectFlash = true
             placed.add(Slab(left, overlap, movingFace))
-            if (placed.size - 1 >= target) { onWin(); return }
+            // no target — keep stacking until you miss
             movingWidth = overlap
             movingFace = Random.nextInt(faces.size)
             movingLeft = if (dir > 0) 0f else wpx - overlap
@@ -1247,7 +1290,7 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
         }
 
         Text(
-            "TORN: ${(placed.size - 1).coerceAtLeast(0)} / $target",
+            "TORN: ${(placed.size - 1).coerceAtLeast(0)}",
             color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 20.sp,
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
         )
@@ -1264,8 +1307,8 @@ private fun StackGame(target: Int, onWin: () -> Unit) {
             )
         } else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Rasade! ${(placed.size - 1).coerceAtLeast(0)}/$target", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                Button(onClick = { restart++ }, modifier = Modifier.padding(top = 10.dp)) { Text("Försök igen") }
+                Text("Rasade!", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
+                ScorePanel((placed.size - 1).coerceAtLeast(0), onRetry = { restart++ }, onContinue = onWin)
             }
         }
     }
@@ -1333,8 +1376,7 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
                     if (py - camY < hpx * 0.45f) camY = py - hpx * 0.45f
                     if (py < minPy) {
                         minPy = py
-                        score = (-minPy / spacing).toInt()
-                        if (score >= target) { onWin(); break }
+                        score = (-minPy / spacing).toInt()   // no target — climb as high as you can
                     }
                     // land on a platform only while falling; interval test avoids tunnelling
                     if (vy > 0f) {
@@ -1446,7 +1488,7 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
         }
 
         Text(
-            "HÖJD: $score / $target",
+            "HÖJD: $score",
             color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 20.sp,
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
         )
@@ -1457,8 +1499,8 @@ private fun JumperGame(target: Int, onWin: () -> Unit) {
             )
         } else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Farmor ramlade! $score/$target", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                Button(onClick = { restart++ }, modifier = Modifier.padding(top = 10.dp)) { Text("Försök igen") }
+                Text("Farmor ramlade!", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
+                ScorePanel(score, onRetry = { restart++ }, onContinue = onWin)
             }
         }
     }

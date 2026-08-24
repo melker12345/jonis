@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 18
+private const val APP_VERSION = 19
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -84,15 +84,15 @@ data class Quest(val title: String, val tag: String, val type: GameType, val goa
 // Nodes 1-9 are minigames, node 10 is the present/candy-budget gate. Nodes 11-30 are
 // grayed placeholders ("more to come") until the post-gate path is designed.
 private val quests = listOf(
-    Quest("Häll upp åt Pappa", "Styr Pappa in i ölstrålen tills glaset är fullt", GameType.BEER, 1),
-    Quest("Familjeminne", "Vänd korten och para ihop släkten", GameType.MEMORY, 2),
+    Quest("Pappa är törstig!", "Styr Pappa in i ölstrålen tills han är full", GameType.BEER, 1),
+    Quest("Familjememory", "Vänd korten och para ihop släkten", GameType.MEMORY, 2),
     Quest("Whac-en-Farmor", "Klappa släkten när de dyker upp — slå 32", GameType.WHAC, 32),
     Quest("Familjesekvens", "Härma ordningen — nå längd 10", GameType.SEQUENCE, 10),
     Quest("Klappa Farmor", "Klappa Farmor — slå 170 på tiden!", GameType.TAP, 170),
     Quest("Familje-Ninja", "Svep släkten, undvik bomben — slå 100", GameType.NINJA, 100),
     Quest("Släkttornet", "Släpp släkten i en hög — stapla 10", GameType.STACK, 10),
     Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten — nå 80", GameType.JUMP, 80),
-    Quest("Farmor i mörkret", "Farmor har gått vilse i en mörk labyrint — lotsa ut henne", GameType.MAZE, 0),
+    Quest("Farmor i mörkret", "Farmor har gått vilse i en mörk labyrint! Hjälp henne hitta ut.", GameType.MAZE, 0),
     Quest("Presenten 🎁", "En budget för godis väntar — skicka bildbevis", GameType.GATE, 0),
 ) + List(20) { Quest("???", "Kommer snart", GameType.LOCKED, 0) }
 
@@ -168,11 +168,12 @@ fun JonisApp() {
 private fun ModeDialog(onPick: (String) -> Unit) {
     AlertDialog(
         onDismissRequest = { },
-        title = { Text("Hur vill du fira? 🎉", fontWeight = FontWeight.Black) },
+        title = { Text("Nu jävlar ska det firas! Frågan är bara hur? 🎉", fontWeight = FontWeight.Black) },
         text = {
             Text(
-                "Välj din väg genom kalaset. De första 10 nivåerna är samma — ditt val " +
-                    "påverkar utmaningarna som väntar efter presenten.",
+                "Välj din väg genom kalaset. Om du vill ta den enkla vägen för att låsa upp " +
+                    "alla presenter eller om du vill ha lite utmanigar som typ \"bevisa att du " +
+                    "har varit på 3 uteserveringar\".",
             )
         },
         confirmButton = {
@@ -246,9 +247,10 @@ private fun Hub(unlocked: Int, open: (Int) -> Unit) {
         )
     }) { pad ->
         Column(Modifier.padding(pad).padding(horizontal = 20.dp).fillMaxSize()) {
-            Text("JONIS\n30-ÅRS KAOS", fontSize = 39.sp, lineHeight = 40.sp, fontWeight = FontWeight.Black)
+            Text("Jonis på äventyr", fontSize = 39.sp, lineHeight = 42.sp, fontWeight = FontWeight.Black)
             Text(
-                "${quests.size} uppdrag. Noll värdighet. En legend.",
+                "hahaha trodde du att du bara skulle få presenter? Haha tänk igen här kommer " +
+                    "lite utmanigar du måste låsa upp innan du får presenterna.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
             )
@@ -261,7 +263,7 @@ private fun Hub(unlocked: Int, open: (Int) -> Unit) {
                 Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 18.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("KAOS FRAMSTEG", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("progress", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Text("${unlocked - 1} / ${quests.size} klara", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
             RoadMap(unlocked, open)
@@ -493,8 +495,8 @@ private fun GateScreen(onUnlock: () -> Unit) {
         Text(
             "Oops! Jag underskattade hur gammal du fyller… så för att köpa mig själv lite mer " +
                 "utvecklingstid: här kommer en budget på minst 250 kr som INTE ska gå till något " +
-                "annat än godis/snacks. 🍬\n\nSkicka bildbevis via SMS till festfixaren, så får du " +
-                "koden som låser upp resten av festen.",
+                "annat än godis/snacks. 🍬\n\nSkicka bildbevis via SMS till världens bästa lilebror, " +
+                "så får du koden som låser upp resten av festen.",
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(vertical = 16.dp),
@@ -506,7 +508,7 @@ private fun GateScreen(onUnlock: () -> Unit) {
             singleLine = true,
             isError = wrong,
         )
-        if (wrong) Text("Fel kod. Skicka godisbeviset först! 🍬", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+        if (wrong) Text("Fel kod. Skicka godisbeviset först, din lilla fuskare, försök inte kolla source koden alla koder är enkrypterade! 🍬", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
@@ -1081,7 +1083,7 @@ private fun TapGame(target: Int, onWin: () -> Unit) {
                     },
             )
             Spacer(Modifier.height(18.dp))
-            Text("KLAPPA FARMOR! · SLÅ $target", fontWeight = FontWeight.Black, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+            Text("KLAPPA FARMOR! · KLAPPA $target", fontWeight = FontWeight.Black, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
         }
         if (ended) ScorePanel(taps, onRetry = { restart++ }, onContinue = onWin)
     }

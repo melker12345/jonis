@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 13
+private const val APP_VERSION = 14
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =

@@ -1,0 +1,94 @@
+# Builds the APK and publishes it as a GitHub release.
+#
+#   git tag v20 && git push origin v20
+#
+# ...produces a release tagged v20 with app-debug.apk attached, then points the
+# in-app updater at it. A manual run (workflow_dispatch) builds and uploads the
+# APK as a run artifact without cutting a release — use it to sanity-check the
+# pipeline before tagging.
+
+name: Build & release APK
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # need master too, for the version.json bump below
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"    # matches jvmToolchain(17) in app/build.gradle.kts
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Install Android SDK packages
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0"
+
+      # The in-app updater compares version.json against APP_VERSION compiled into
+      # the APK. A tag that disagrees with the source would ship a build that keeps
+      # re-prompting for an update, so fail loudly here instead.
+      - name: Check tag matches APP_VERSION and versionCode
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          app=$(grep -oP 'APP_VERSION = \K\d+' app/src/main/java/com/jonis/thirty/MainActivity.kt)
+          code=$(grep -oP 'versionCode = \K\d+' app/build.gradle.kts)
+          echo "tag=$tag APP_VERSION=$app versionCode=$code"
+          if [ "$tag" != "$app" ] || [ "$tag" != "$code" ]; then
+            echo "::error::tag v$tag, APP_VERSION $app, versionCode $code — all three must match"
+            exit 1
+          fi
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK as run artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-${{ github.ref_name }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            app/build/outputs/apk/debug/app-debug.apk \
+            --title "Jonis 30 $GITHUB_REF_NAME" \
+            --generate-notes
+
+      # Only once the APK is actually downloadable. Bumping version.json any earlier
+      # shows every older install a forced-update dialog pointing at the previous
+      # APK, which reports the old version again — an update loop with no way out.
+      - name: Point the updater at the new release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          git checkout -B master origin/master
+          sed -i "s/\"version\": [0-9]*/\"version\": $ver/" version.json
+          if git diff --quiet version.json; then
+            echo "version.json already at $ver — nothing to do"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "v$ver: point updater at the new release [skip ci]"
+          git push origin master

@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 8
+private const val APP_VERSION = 9
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -458,15 +458,23 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
     var fill by remember { mutableFloatStateOf(0f) }
     var elapsed by remember { mutableFloatStateOf(0f) }
 
-    val driftSpeed = 0.9f + difficulty * 0.5f
-    val fillRate = 0.32f
-    val drainRate = 0.15f
-    val catchWidth = 0.13f
+    // tuned harder: the stream swings faster + on two frequencies (less predictable),
+    // the catch zone is narrower and the glass drains quicker when you miss
+    val driftSpeed = 1.7f + difficulty * 0.7f
+    val fillRate = 0.30f
+    val drainRate = 0.24f
+    val catchWidth = 0.10f
 
     BoxWithConstraints(
         Modifier.fillMaxSize()
             .clip(RoundedCornerShape(20.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFF243B66), Color(0xFF14203A)))),
+            .background(Brush.verticalGradient(listOf(Color(0xFF243B66), Color(0xFF14203A))))
+            // direct control: Pappa snaps to wherever you touch/drag horizontally
+            .pointerInput(Unit) {
+                detectDragGestures { change, _ ->
+                    dadX = (change.position.x / size.width).coerceIn(0f, 1f)
+                }
+            },
     ) {
         val widthPx = with(density) { maxWidth.toPx() }
         val pappaW = 152.dp
@@ -483,7 +491,8 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
                 if (last != 0L) {
                     val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
                     elapsed += dt
-                    streamX = 0.5f + 0.42f * sin(elapsed * driftSpeed)
+                    streamX = (0.5f + 0.34f * sin(elapsed * driftSpeed) +
+                        0.12f * sin(elapsed * driftSpeed * 2.7f)).coerceIn(0.06f, 0.94f)
                     val aligned = abs(dadX - streamX) < catchWidth
                     fill = (fill + (if (aligned) fillRate else -drainRate) * dt).coerceIn(0f, 1f)
                     if (fill >= 1f) { onWin(); break }
@@ -614,7 +623,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
             )
         }
 
-        // Pappa cutout, draggable left/right (scales up while drinking)
+        // Pappa cutout — position follows your touch (handled on the parent box)
         val pappaScale = if (aligned) 1.08f + glowPulse * 0.05f else 1f
         Image(
             painter = painterResource(R.drawable.pappa1),
@@ -628,12 +637,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
                 }
                 .padding(bottom = 8.dp)
                 .width(pappaW)
-                .graphicsLayer { scaleX = pappaScale; scaleY = pappaScale }
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures { _, dragAmount ->
-                        dadX = (dadX + dragAmount / widthPx).coerceIn(0f, 1f)
-                    }
-                },
+                .graphicsLayer { scaleX = pappaScale; scaleY = pappaScale },
         )
 
         // "Pappa is drinking" label, only while aligned
@@ -648,7 +652,7 @@ private fun BeerGame(difficulty: Int, onWin: () -> Unit) {
         }
 
         Text(
-            "Dra Pappa i sidled →",
+            "Tryck/dra för att flytta Pappa",
             color = Color(0xCCFFFFFF),
             fontSize = 12.sp,
             modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
@@ -990,7 +994,8 @@ private fun TapGame(target: Int, onWin: () -> Unit) {
 
 private class Flyer(
     var x: Float, var y: Float, var vx: Float, var vy: Float,
-    val face: Int, var rot: Float = 0f, var vrot: Float = 0f,
+    val face: Int, val bomb: Boolean,
+    var rot: Float = 0f, var vrot: Float = 0f,
     var sliced: Boolean = false, var alive: Boolean = true,
 )
 
@@ -998,40 +1003,48 @@ private class Flyer(
 private fun NinjaGame(target: Int, onWin: () -> Unit) {
     val density = LocalDensity.current
     var score by remember { mutableIntStateOf(0) }
+    var failed by remember { mutableStateOf(false) }
+    var restart by remember { mutableIntStateOf(0) }
     var tick by remember { mutableIntStateOf(0) }
     val flyers = remember { mutableStateListOf<Flyer>() }
-    val sizePx = with(density) { 78.dp.toPx() }
+    val sizePx = with(density) { 82.dp.toPx() }
 
     BoxWithConstraints(
         Modifier.fillMaxSize()
             .clip(RoundedCornerShape(20.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFF2A1D3A), Color(0xFF120B1C)))),
+            .background(Brush.verticalGradient(listOf(Color(0xFF16263F), Color(0xFF090E18)))),
     ) {
         val w = with(density) { maxWidth.toPx() }
         val h = with(density) { maxHeight.toPx() }
 
-        LaunchedEffect(Unit) {
+        LaunchedEffect(restart) {
+            flyers.clear()
+            score = 0
+            failed = false
             var last = 0L
-            var sinceSpawn = 0f
-            val gravity = h * 0.9f
-            while (score < target) {
+            var sinceSpawn = 0.4f
+            val gravity = h * 1.15f
+            while (score < target && !failed) {
                 val now = withFrameNanos { it }
                 if (last != 0L) {
-                    val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
+                    val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.033f)
                     sinceSpawn += dt
-                    if (sinceSpawn > 0.85f) {
+                    // spawn faster as the score climbs
+                    val interval = (0.95f - score * 0.02f).coerceAtLeast(0.5f)
+                    if (sinceSpawn >= interval) {
                         sinceSpawn = 0f
-                        val startX = w * (0.15f + 0.7f * Random.nextFloat())
-                        // aim the upward launch so the arc peaks well inside the screen,
-                        // then gravity pulls it back down across the visible area
+                        val startX = w * (0.18f + 0.64f * Random.nextFloat())
+                        // launch upward; gravity arcs it back down through the screen.
+                        // vx biases toward the centre so it sweeps across the play area.
                         flyers.add(
                             Flyer(
-                                x = startX, y = h + sizePx,
-                                vx = (Random.nextFloat() - 0.5f) * w * 0.5f,
-                                vy = -h * (1.05f + Random.nextFloat() * 0.25f),
+                                x = startX, y = h + sizePx * 0.5f,
+                                vx = (w * 0.5f - startX) / 1.3f + (Random.nextFloat() - 0.5f) * w * 0.22f,
+                                vy = -h * (1.18f + Random.nextFloat() * 0.16f),
                                 face = Random.nextInt(faces.size),
+                                bomb = score >= 4 && Random.nextFloat() < 0.22f,
                                 rot = Random.nextFloat() * 360f,
-                                vrot = (Random.nextFloat() - 0.5f) * 480f,
+                                vrot = (Random.nextFloat() - 0.5f) * 320f,
                             ),
                         )
                     }
@@ -1049,21 +1062,24 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
                 }
                 last = now
             }
-            onWin()
+            if (score >= target) onWin()
         }
 
         Box(
-            Modifier.fillMaxSize().pointerInput(Unit) {
+            Modifier.fillMaxSize().pointerInput(restart) {
                 detectDragGestures { change, _ ->
                     val p = change.position
                     // iterate a snapshot and ONLY set flags; the physics loop removes
-                    // sliced flyers, avoiding concurrent structural modification
+                    // sliced flyers, avoiding concurrent structural modification.
+                    // only sliceable while genuinely on-screen — stops phantom hits
+                    // at the launch point below the bottom edge
                     for (f in flyers.toList()) {
                         if (f.alive && !f.sliced &&
-                            hypot(p.x - f.x, p.y - f.y) < sizePx * 0.75f
+                            f.y > sizePx * 0.3f && f.y < h - sizePx * 0.1f &&
+                            hypot(p.x - f.x, p.y - f.y) < sizePx * 0.7f
                         ) {
                             f.sliced = true
-                            score++
+                            if (f.bomb) failed = true else score++
                         }
                     }
                 }
@@ -1073,18 +1089,35 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
             // offset/rotation lambdas below are re-evaluated every physics frame
             tick
             flyers.forEach { f ->
-                if (f.alive && !f.sliced) {
-                    Image(
-                        painterResource(faces[f.face].first),
-                        faces[f.face].second,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .offset { IntOffset((f.x - sizePx / 2).toInt(), (f.y - sizePx / 2).toInt()) }
-                            .size(78.dp)
-                            .graphicsLayer { rotationZ = f.rot }
-                            .clip(CircleShape)
-                            .border(3.dp, Color.White, CircleShape),
-                    )
+                key(f) {
+                    if (f.alive && !f.sliced) {
+                        if (f.bomb) {
+                            Box(
+                                Modifier
+                                    .offset { IntOffset((f.x - sizePx / 2).toInt(), (f.y - sizePx / 2).toInt()) }
+                                    .size(with(density) { sizePx.toDp() })
+                                    .graphicsLayer { rotationZ = f.rot }
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF181818))
+                                    .border(4.dp, Color(0xFFFF5252), CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("💣", fontSize = 34.sp)
+                            }
+                        } else {
+                            Image(
+                                painterResource(faces[f.face].first),
+                                faces[f.face].second,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .offset { IntOffset((f.x - sizePx / 2).toInt(), (f.y - sizePx / 2).toInt()) }
+                                    .size(with(density) { sizePx.toDp() })
+                                    .graphicsLayer { rotationZ = f.rot }
+                                    .clip(CircleShape)
+                                    .border(3.dp, Color.White, CircleShape),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1096,12 +1129,19 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
             fontSize = 20.sp,
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
         )
-        Text(
-            "Dra fingret genom släkten",
-            color = Color(0xCCFFFFFF),
-            fontSize = 12.sp,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
-        )
+        if (!failed) {
+            Text(
+                "Svep släkten — undvik bomben 💣",
+                color = Color(0xCCFFFFFF),
+                fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+            )
+        } else {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("BOM! 💥 Du svepte en bomb", color = Color.White, fontWeight = FontWeight.Bold)
+                Button(onClick = { restart++ }, modifier = Modifier.padding(top = 10.dp)) { Text("Försök igen") }
+            }
+        }
     }
 }
 

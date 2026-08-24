@@ -64,7 +64,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 7
+private const val APP_VERSION = 8
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -77,7 +77,7 @@ private const val GATE_CODE_HASH =
 
 // ---------- Journey data ----------
 
-enum class GameType { BEER, WHAC, MEMORY, SEQUENCE, TAP, NINJA, GATE }
+enum class GameType { BEER, WHAC, MEMORY, SEQUENCE, TAP, NINJA, STACK, JUMP, GATE }
 
 data class Quest(val title: String, val tag: String, val type: GameType, val goal: Int)
 
@@ -89,6 +89,8 @@ private val quests = listOf(
     Quest("Familjesekvens", "Härma ordningen släkten lyser upp i", GameType.SEQUENCE, 6),
     Quest("Klappa Farmor", "120 klapp på 22 sekunder. Kör!", GameType.TAP, 120),
     Quest("Familje-Ninja", "Svep sönder släkten som flyger upp — 15 träffar", GameType.NINJA, 15),
+    Quest("Släkttornet", "Släpp släkten i en hög — pricka mitten. Stapla 8", GameType.STACK, 8),
+    Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten. Klättra 25", GameType.JUMP, 25),
     Quest("Spring 5 km", "Visa Strava-bevis och få hemliga koden av festfixaren", GameType.GATE, 0),
 )
 
@@ -98,6 +100,11 @@ private val faces = listOf(
     R.drawable.melker to "Melker",
     R.drawable.jonis to "Jonis",
     R.drawable.farmor to "Farmor",
+    R.drawable.elvis to "Elvis",
+    R.drawable.olivia to "Olivia",
+    R.drawable.mamma to "Mamma",
+    R.drawable.jonis1 to "Jonis",
+    R.drawable.farmor1 to "Farmor",
 )
 
 class MainActivity : ComponentActivity() {
@@ -382,6 +389,8 @@ private fun GameHost(quest: Quest, index: Int, onWinContinue: () -> Unit, onBack
                         GameType.SEQUENCE -> SequenceGame(quest.goal) { won = true }
                         GameType.TAP -> TapGame(quest.goal) { won = true }
                         GameType.NINJA -> NinjaGame(quest.goal) { won = true }
+                        GameType.STACK -> StackGame(quest.goal) { won = true }
+                        GameType.JUMP -> JumperGame(quest.goal) { won = true }
                         GameType.GATE -> GateScreen { won = true }
                     }
                 }
@@ -1093,5 +1102,338 @@ private fun NinjaGame(target: Int, onWin: () -> Unit) {
             fontSize = 12.sp,
             modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
         )
+    }
+}
+
+// ---------- Game 7: Stack Tower (family blocks) ----------
+
+private class Slab(val left: Float, val width: Float, val face: Int)
+
+@Composable
+private fun StackGame(target: Int, onWin: () -> Unit) {
+    val density = LocalDensity.current
+    BoxWithConstraints(
+        Modifier.fillMaxSize()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF10233F), Color(0xFF071324)))),
+    ) {
+        val wpx = with(density) { maxWidth.toPx() }
+        val hpx = with(density) { maxHeight.toPx() }
+        val blockH = with(density) { 52.dp.toPx() }
+        val bottomPad = with(density) { 12.dp.toPx() }
+
+        val placed = remember { mutableStateListOf<Slab>() }
+        var movingLeft by remember { mutableFloatStateOf(0f) }
+        var movingWidth by remember { mutableFloatStateOf(0f) }
+        var movingFace by remember { mutableIntStateOf(0) }
+        var dir by remember { mutableIntStateOf(1) }
+        var failed by remember { mutableStateOf(false) }
+        var restart by remember { mutableIntStateOf(0) }
+        var perfectFlash by remember { mutableStateOf(false) }
+
+        // (re)start — declared first so it fully initialises before the slide loop runs
+        LaunchedEffect(restart) {
+            placed.clear()
+            val baseW = wpx * 0.42f
+            placed.add(Slab((wpx - baseW) / 2f, baseW, Random.nextInt(faces.size)))
+            movingWidth = baseW
+            movingFace = Random.nextInt(faces.size)
+            movingLeft = 0f
+            dir = 1
+            failed = false
+        }
+
+        // slide the active block back and forth; speed grows as the tower rises
+        LaunchedEffect(restart) {
+            var last = 0L
+            while (!failed) {
+                val now = withFrameNanos { it }
+                if (last != 0L && !failed) {
+                    val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.05f)
+                    val sp = wpx * (0.55f + (placed.size - 1) * 0.04f).coerceAtMost(1.7f)
+                    movingLeft += dir * sp * dt
+                    if (movingLeft <= 0f) { movingLeft = 0f; dir = 1 }
+                    if (movingLeft + movingWidth >= wpx) { movingLeft = wpx - movingWidth; dir = -1 }
+                }
+                last = now
+            }
+        }
+
+        LaunchedEffect(perfectFlash) { if (perfectFlash) { delay(220); perfectFlash = false } }
+
+        fun drop() {
+            if (failed) return
+            val top = placed.last()
+            val left = maxOf(movingLeft, top.left)
+            val right = minOf(movingLeft + movingWidth, top.left + top.width)
+            val overlap = right - left
+            if (overlap <= wpx * 0.02f) { failed = true; return }   // missed the stack
+            if (abs(movingLeft - top.left) < wpx * 0.03f) perfectFlash = true
+            placed.add(Slab(left, overlap, movingFace))
+            if (placed.size - 1 >= target) { onWin(); return }
+            movingWidth = overlap
+            movingFace = Random.nextInt(faces.size)
+            movingLeft = if (dir > 0) 0f else wpx - overlap
+        }
+
+        // camera starts scrolling once the tower gets tall so the active block stays visible
+        val rawShift = (placed.size + 1) * blockH + bottomPad - hpx * 0.72f
+        val camShift by animateFloatAsState(rawShift.coerceAtLeast(0f), label = "cam")
+        fun topYOf(i: Int) = hpx - bottomPad - (i + 1) * blockH + camShift
+
+        Box(Modifier.fillMaxSize().clickable(enabled = !failed) { drop() }) {
+            placed.forEachIndexed { i, s ->
+                val topY = topYOf(i)
+                Box(
+                    Modifier
+                        .offset { IntOffset(s.left.toInt(), topY.toInt()) }
+                        .size(with(density) { s.width.toDp() }, with(density) { blockH.toDp() })
+                        .clip(RoundedCornerShape(6.dp))
+                        .border(2.dp, Color.White, RoundedCornerShape(6.dp)),
+                ) {
+                    Image(
+                        painterResource(faces[s.face].first), faces[s.face].second,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)),
+                    )
+                }
+            }
+            if (!failed) {
+                val topY = topYOf(placed.size)
+                Box(
+                    Modifier
+                        .offset { IntOffset(movingLeft.toInt(), topY.toInt()) }
+                        .size(with(density) { movingWidth.toDp() }, with(density) { blockH.toDp() })
+                        .clip(RoundedCornerShape(6.dp))
+                        .border(3.dp, Color(0xFFD7FF45), RoundedCornerShape(6.dp)),
+                ) {
+                    Image(
+                        painterResource(faces[movingFace].first), faces[movingFace].second,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)),
+                    )
+                }
+            }
+        }
+
+        Text(
+            "TORN: ${(placed.size - 1).coerceAtLeast(0)} / $target",
+            color = Color.White, fontWeight = FontWeight.Black, fontSize = 20.sp,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+        )
+        if (perfectFlash) {
+            Text(
+                "PERFEKT! ✨", color = Color(0xFFD7FF45), fontWeight = FontWeight.Black, fontSize = 22.sp,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
+        if (!failed) {
+            Text(
+                "Tryck för att släppa", color = Color(0xCCFFFFFF), fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+            )
+        } else {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Rasade! ${(placed.size - 1).coerceAtLeast(0)}/$target", color = Color.White, fontWeight = FontWeight.Bold)
+                Button(onClick = { restart++ }, modifier = Modifier.padding(top = 10.dp)) { Text("Försök igen") }
+            }
+        }
+    }
+}
+
+// ---------- Game 8: Vertical Jumper (Farmor, doodle-jump style) ----------
+
+private class Plat(val x: Float, val y: Float, val w: Float, val kind: Int, var boot: Boolean, var alive: Boolean = true)
+private class Obst(var x: Float, val y: Float, var vx: Float, val face: Int)
+
+// obstacles alternate between Melker, Elvis and Jonis (indices into `faces`)
+private val obstacleFaces = listOf(1, 4, 2)
+
+private fun spawnPlat(y: Float, wpx: Float, platW: Float, kind: Int): Plat =
+    Plat(Random.nextFloat() * (wpx - platW), y, platW, kind, false)
+
+@Composable
+private fun JumperGame(target: Int, onWin: () -> Unit) {
+    val density = LocalDensity.current
+    BoxWithConstraints(
+        Modifier.fillMaxSize()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF12324A), Color(0xFF0A1626)))),
+    ) {
+        val wpx = with(density) { maxWidth.toPx() }
+        val hpx = with(density) { maxHeight.toPx() }
+        val playerSz = with(density) { 66.dp.toPx() }
+        val platW = with(density) { 86.dp.toPx() }
+        val platH = with(density) { 18.dp.toPx() }
+        val spacing = with(density) { 112.dp.toPx() }
+        val obstSz = with(density) { 60.dp.toPx() }
+
+        var px by remember { mutableFloatStateOf(wpx / 2f) }
+        var py by remember { mutableFloatStateOf(0f) }
+        var vy by remember { mutableFloatStateOf(0f) }
+        var camY by remember { mutableFloatStateOf(0f) }   // world-y mapped to the top of the screen
+        var score by remember { mutableIntStateOf(0) }
+        var failed by remember { mutableStateOf(false) }
+        var restart by remember { mutableIntStateOf(0) }
+        var tick by remember { mutableIntStateOf(0) }
+
+        val plats = remember { mutableStateListOf<Plat>() }
+        val obstacles = remember { mutableStateListOf<Obst>() }
+
+        val jumpV = hpx * 1.15f
+        val springV = hpx * 1.95f
+        val gravity = hpx * 1.9f
+
+        // world y increases downward: jumping is negative vy, falling is positive
+        LaunchedEffect(restart) {
+            plats.clear(); obstacles.clear()
+            px = wpx / 2f; py = 0f; vy = -jumpV
+            camY = py - hpx * 0.55f
+            score = 0; failed = false
+            plats.add(Plat(wpx / 2f - platW / 2f, playerSz, platW, 0, false))
+            var topGen = playerSz
+            repeat(16) { topGen -= spacing; plats.add(spawnPlat(topGen, wpx, platW, 0)) }
+
+            var last = 0L
+            var minPy = py
+            while (!failed) {
+                val now = withFrameNanos { it }
+                if (last != 0L) {
+                    val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.033f)
+                    vy += gravity * dt
+                    py += vy * dt
+                    if (px < 0f) px += wpx
+                    if (px > wpx) px -= wpx
+                    if (py - camY < hpx * 0.45f) camY = py - hpx * 0.45f
+                    if (py < minPy) {
+                        minPy = py
+                        score = (-minPy / spacing).toInt()
+                        if (score >= target) { onWin(); break }
+                    }
+                    // land on a platform only while falling; interval test avoids tunnelling
+                    if (vy > 0f) {
+                        val feet = py + playerSz * 0.35f
+                        val prevFeet = feet - vy * dt
+                        for (p in plats) {
+                            if (!p.alive) continue
+                            if (px + playerSz * 0.25f > p.x && px - playerSz * 0.25f < p.x + p.w &&
+                                prevFeet <= p.y && feet >= p.y
+                            ) {
+                                if (p.kind == 1) p.alive = false            // breaking: fall through
+                                else {
+                                    vy = -(if (p.boot || p.kind == 2) springV else jumpV)
+                                    py = p.y - playerSz * 0.35f
+                                }
+                                break
+                            }
+                        }
+                    }
+                    for (o in obstacles) {
+                        o.x += o.vx * dt
+                        if (o.x < obstSz / 2) o.vx = abs(o.vx)
+                        if (o.x > wpx - obstSz / 2) o.vx = -abs(o.vx)
+                        if (hypot(px - o.x, py - o.y) < (playerSz + obstSz) * 0.32f) failed = true
+                    }
+                    // generate platforms above; sparser + obstacles as the climb gets higher
+                    while (topGen > camY - spacing) {
+                        topGen -= spacing * (0.85f + Random.nextFloat() * 0.5f + (score * 0.01f).coerceAtMost(0.6f))
+                        val kind = when {
+                            score > 6 && Random.nextFloat() < 0.18f -> 1
+                            score > 3 && Random.nextFloat() < 0.14f -> 2
+                            else -> 0
+                        }
+                        val p = spawnPlat(topGen, wpx, platW, kind)
+                        if (kind == 0 && Random.nextFloat() < 0.12f) p.boot = true
+                        plats.add(p)
+                        if (score > 8 && Random.nextFloat() < 0.22f) {
+                            obstacles.add(
+                                Obst(
+                                    x = wpx * (0.2f + 0.6f * Random.nextFloat()),
+                                    y = topGen - spacing * 0.5f,
+                                    vx = (if (Random.nextBoolean()) 1f else -1f) * wpx * (0.25f + Random.nextFloat() * 0.25f),
+                                    face = obstacleFaces[Random.nextInt(obstacleFaces.size)],
+                                ),
+                            )
+                        }
+                    }
+                    plats.removeAll { (it.y - camY > hpx + spacing) || (!it.alive && it.y - camY > 0f) }
+                    obstacles.removeAll { it.y - camY > hpx + spacing }
+                    if (py - camY > hpx + playerSz) failed = true
+                    tick++
+                }
+                last = now
+            }
+        }
+
+        Box(
+            Modifier.fillMaxSize().pointerInput(restart) {
+                detectHorizontalDragGestures { _, dx -> px += dx }
+            },
+        ) {
+            tick
+            plats.forEach { p ->
+                if (p.alive) {
+                    val sy = p.y - camY
+                    Box(
+                        Modifier
+                            .offset { IntOffset(p.x.toInt(), sy.toInt()) }
+                            .size(with(density) { p.w.toDp() }, with(density) { platH.toDp() })
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                when (p.kind) {
+                                    1 -> Color(0xFF8D6E63)      // breaking (brown)
+                                    2 -> Color(0xFF00E5FF)      // spring (cyan)
+                                    else -> Color(0xFFB7E34B)   // normal (green)
+                                },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (p.boot) Text("🥾", fontSize = 15.sp)
+                        else if (p.kind == 2) Text("⬆", fontWeight = FontWeight.Black, fontSize = 13.sp, color = Color(0xFF063038))
+                    }
+                }
+            }
+            obstacles.forEach { o ->
+                val sy = o.y - camY
+                Image(
+                    painterResource(faces[o.face].first), faces[o.face].second,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .offset { IntOffset((o.x - obstSz / 2).toInt(), (sy - obstSz / 2).toInt()) }
+                        .size(with(density) { obstSz.toDp() })
+                        .clip(CircleShape)
+                        .border(3.dp, Color(0xFFFF5252), CircleShape),
+                )
+            }
+            if (!failed) {
+                val sy = py - camY
+                Image(
+                    painterResource(R.drawable.farmor), "Farmor",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .offset { IntOffset((px - playerSz / 2).toInt(), (sy - playerSz / 2).toInt()) }
+                        .size(with(density) { playerSz.toDp() })
+                        .clip(CircleShape)
+                        .border(4.dp, Color(0xFFD7FF45), CircleShape),
+                )
+            }
+        }
+
+        Text(
+            "HÖJD: $score / $target",
+            color = Color.White, fontWeight = FontWeight.Black, fontSize = 20.sp,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+        )
+        if (!failed) {
+            Text(
+                "Dra i sidled för att styra", color = Color(0xCCFFFFFF), fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
+            )
+        } else {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Farmor ramlade! $score/$target", color = Color.White, fontWeight = FontWeight.Bold)
+                Button(onClick = { restart++ }, modifier = Modifier.padding(top = 10.dp)) { Text("Försök igen") }
+            }
+        }
     }
 }

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
@@ -43,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -64,7 +66,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 24
+private const val APP_VERSION = 25
 
 // Raw URL of version.json in your GitHub repo. REPLACE <YOUR_USER>/<YOUR_REPO>.
 private const val VERSION_URL =
@@ -77,12 +79,25 @@ private const val GATE_CODE_HASH =
 
 // ---------- Journey data ----------
 
-enum class GameType { BEER, WHAC, MEMORY, SEQUENCE, TAP, NINJA, STACK, JUMP, MAZE, GATE, LOCKED }
+enum class GameType { BEER, WHAC, MEMORY, SEQUENCE, TAP, NINJA, STACK, JUMP, MAZE, GATE, CHALLENGE, GIFT, LOCKED }
 
-data class Quest(val title: String, val tag: String, val type: GameType, val goal: Int)
+// codeHash: SHA-256 of the (uppercased) code Melker texts over once he's seen the photo
+//           proof — only set for CHALLENGE nodes. flavor: optional italic intro line.
+data class Quest(
+    val title: String,
+    val tag: String,
+    val type: GameType,
+    val goal: Int,
+    val codeHash: String? = null,
+    val flavor: String? = null,
+    // optional line spelling out what counts as proof (e.g. "Bildbevis på Strava")
+    val proofHint: String? = null,
+)
 
-// Nodes 1-9 are minigames, node 10 is the present/candy-budget gate. Nodes 11-30 are
-// grayed placeholders ("more to come") until the post-gate path is designed.
+// Nodes 1-9 are minigames, node 10 is the present/candy-budget gate. Nodes 11-21 are
+// IRL challenges: each shows the task, you text a photo to Melker, he texts back the
+// unlock code (node 20 is a gift-reveal with just a Continue button). Nodes 22-30 stay
+// grayed placeholders until designed.
 private val quests = listOf(
     Quest("Pappa är törstig!", "Styr Pappa in i ölstrålen tills han är full", GameType.BEER, 1),
     Quest("Familjememory", "Vänd korten och para ihop släkten", GameType.MEMORY, 2),
@@ -94,7 +109,57 @@ private val quests = listOf(
     Quest("Farmor Hoppar", "Studsa Farmor uppåt, väj för släkten — nå 55", GameType.JUMP, 55),
     Quest("Farmor i mörkret", "Farmor har gått vilse i en mörk labyrint! Hjälp henne hitta ut.", GameType.MAZE, 0),
     Quest("Presenten 🎁", "En budget för godis väntar — skicka bildbevis", GameType.GATE, 0),
-) + List(20) { Quest("???", "Kommer snart", GameType.LOCKED, 0) }
+    // --- IRL challenges (nodes 11-21) ---
+    Quest(
+        "Drick", "Sänk valfri enhet — med kapsyl! Skicka bildbevis.",
+        GameType.CHALLENGE, 0, codeHash = "74bcea300e57da996fea1b1bf55242f92938e9f09343bb80c075d0adbb2cd105",
+        flavor = "Tjohuuu!! Nu jävlar får du inviga din nya, fina, superbra och exklusiva ölöppnare 🍺",
+    ),
+    Quest(
+        "Grimasparaden", "Skicka 5 av dina finaste grimaser i släktchatten.",
+        GameType.CHALLENGE, 0, codeHash = "a997615456c511a2bb8fb9025e60f0e8c7a1a706209cccd31039ab871f528f7e",
+    ),
+    Quest(
+        "Spelmaraton", "Spela i minst 3 timmar. Bildbevis om möjligt, annars intyg från Olivis.",
+        GameType.CHALLENGE, 0, codeHash = "fd12cc292a7ee06f499c3a824a019a56df935f6398ac01967055f4f16bae1111",
+        flavor = "Haha, den här kanske inte är alltför uppskattad av Olivia 😅 — men fear not, Olivis! 😁",
+    ),
+    Quest(
+        "Sysslan", "Utför valfri syssla. Bildbevis eller intyg från Olivis. 😆",
+        GameType.CHALLENGE, 0, codeHash = "6b47c9a9572152db9c9b519235782ff25c37f2b51656cee1a14114d4cbfff132",
+    ),
+    Quest(
+        "Spring", "Spring minst 2,5 km eller cykla 5 km.",
+        GameType.CHALLENGE, 0, codeHash = "28cf7436197cceaafe67e12cc079980cee9199b2c09a791fca62c78791785a8b",
+        proofHint = "Bildbevis på Strava eller liknande",
+    ),
+    Quest(
+        "Korthuset", "Bygg ett korthus med minst 3 kort i botten. Skicka bildbevis.",
+        GameType.CHALLENGE, 0, codeHash = "59a367c8f9d7c70c0e0087172d8c672e224d204c95aac0f13a848dcfbaed2ad9",
+    ),
+    Quest(
+        "Stå på händer", "Stå på händer. Skicka bildbevis!",
+        GameType.CHALLENGE, 0, codeHash = "e99de9857817487a62aa0795e25a65f5ed2ab89aad39ed1bd16942e2b816f0e1",
+        flavor = "Dags att stretcha, värma upp och förbereda dig mentalt — nu ska lederna stresstestas 🤸",
+    ),
+    Quest(
+        "Stjärnpyramiden", "Printa en pyramid 1 till 30 \"*\" i valfritt programmeringsspråk:\n\n*\n**\n***\n...\n30(*)",
+        GameType.CHALLENGE, 0, codeHash = "a896edd8365cf0f2890d07e19fc9c8f6a94ed51605b6979c16bd479562ee29a1",
+        flavor = "Phew — om du läser detta betyder det att du överlevde handståendet 😮‍💨",
+    ),
+    Quest(
+        "Mästerkocken", "Laga god mat. Skicka en bild!",
+        GameType.CHALLENGE, 0, codeHash = "382c1e2e4b1ba67de34a387df93d14ce2f435ce287922b4e14e8caa5ea0e030f",
+    ),
+    Quest(
+        "Öppna presenten 🎁", "Dags att öppna en present! Tryck Fortsätt när du öppnat den.",
+        GameType.GIFT, 0,
+    ),
+    Quest(
+        "Picasso", "Inviga pennan — rita något fint! Skicka bildbevis.",
+        GameType.CHALLENGE, 0, codeHash = "828620b56e3f97563c6dbf4b2dddeb953efc14cd3b9d6da89315d879ae3aefcc",
+    ),
+) + List(9) { Quest("???", "Kommer snart", GameType.LOCKED, 0) }
 
 // pool of family faces reused across games
 private val faces = listOf(
@@ -142,6 +207,8 @@ fun JonisApp() {
         if (idx == null) {
             Hub(unlocked) { selected = it }
         } else {
+            // system back returns to the road map instead of closing the app
+            BackHandler { selected = null }
             GameHost(
                 quest = quests[idx],
                 index = idx,
@@ -281,7 +348,9 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
     val primary = MaterialTheme.colorScheme.primary
     val cols = 3
     val nodeSize = 84.dp
-    val rowStep = 128.dp
+    // rowStep leaves enough gap below each node for a two-line label without the next
+    // row's node overlapping it (node 84 + up to ~2 lines of 11sp text + padding)
+    val rowStep = 148.dp
     val topPad = 12.dp
     val rows = (quests.size + cols - 1) / cols
 
@@ -329,7 +398,7 @@ private fun RoadMap(unlocked: Int, open: (Int) -> Unit) {
             }
             quests.indices.forEach { i ->
                 val placeholder = quests[i].type == GameType.LOCKED
-                val isGift = quests[i].type == GameType.GATE
+                val isGift = quests[i].type == GameType.GATE || quests[i].type == GameType.GIFT
                 // placeholders are never active/completed — they stay grayed "more to come"
                 val active = !placeholder && i == unlocked - 1
                 val completed = !placeholder && i < unlocked - 1
@@ -415,15 +484,19 @@ private fun GameHost(quest: Quest, index: Int, onWinContinue: () -> Unit, onBack
     // otherwise default text/icons render black and vanish in dark theme.
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.fillMaxSize().statusBarsPadding().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onBack) { Icon(Icons.Outlined.ArrowBack, "Tillbaka") }
                     Column(Modifier.padding(start = 4.dp)) {
                         Text("UPPDRAG %02d".format(index + 1), color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         Text(quest.title, fontSize = 22.sp, fontWeight = FontWeight.Black)
                     }
                 }
-                Text(quest.tag, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp), textAlign = TextAlign.Center)
+                // IRL challenge / gift screens render the task themselves (as the hero),
+                // so skip the small tag line here to avoid a de-emphasised duplicate.
+                if (quest.type != GameType.CHALLENGE && quest.type != GameType.GIFT) {
+                    Text(quest.tag, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(vertical = 10.dp), textAlign = TextAlign.Center)
+                }
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     when (quest.type) {
                         GameType.BEER -> BeerGame(quest.goal) { won = true }
@@ -436,6 +509,8 @@ private fun GameHost(quest: Quest, index: Int, onWinContinue: () -> Unit, onBack
                         GameType.JUMP -> JumperGame(quest.goal) { won = true }
                         GameType.MAZE -> MazeGame { won = true }
                         GameType.GATE -> GateScreen { won = true }
+                        GameType.CHALLENGE -> ChallengeScreen(quest) { won = true }
+                        GameType.GIFT -> GiftScreen(quest) { won = true }
                         GameType.LOCKED -> Text("Kommer snart…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -525,7 +600,15 @@ private fun GateScreen(onUnlock: () -> Unit) {
                 "så får du koden som låser upp resten av festen.",
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(vertical = 16.dp),
+            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+        )
+        Text(
+            "(Köp en valfri dryck med kapsyl om du inte har en hemma 😉)",
+            fontSize = 13.sp,
+            fontStyle = FontStyle.Italic,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 16.dp, start = 6.dp, end = 6.dp),
         )
         OutlinedTextField(
             value = code,
@@ -542,6 +625,117 @@ private fun GateScreen(onUnlock: () -> Unit) {
             },
             enabled = code.isNotBlank(),
         ) { Text("Lås upp", fontWeight = FontWeight.Bold) }
+    }
+}
+
+// ---------- IRL challenge: task + photo-proof code unlock ----------
+
+// Shows the challenge (title + tag are drawn by GameHost), an optional flavor line, and a
+// code field. Player texts Melker a photo; he texts back the code that unlocks the node.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChallengeScreen(quest: Quest, onUnlock: () -> Unit) {
+    var code by remember { mutableStateOf("") }
+    var wrong by remember { mutableStateOf(false) }
+    val scroll = rememberScrollState()
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxWidth().verticalScroll(scroll),
+    ) {
+        // --- the task is the hero: a big bold card front and centre ---
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(20.dp))
+                .padding(vertical = 22.dp, horizontal = 18.dp),
+        ) {
+            Text(
+                "DIN UTMANING",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 2.sp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                quest.tag,
+                fontSize = 23.sp,
+                lineHeight = 30.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+        // --- flavour line: clearly secondary, quiet italic under the task ---
+        quest.flavor?.let {
+            Text(
+                it,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                fontStyle = FontStyle.Italic,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 16.dp, start = 6.dp, end = 6.dp),
+            )
+        }
+        Spacer(Modifier.height(28.dp))
+        // --- proof + unlock ---
+        Text("📸", fontSize = 40.sp)
+        Text(
+            "Skicka bildbeviset via SMS till världens bästa lillebror, så får du koden som " +
+                "låser upp nästa uppdrag.",
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp, start = 6.dp, end = 6.dp),
+        )
+        quest.proofHint?.let {
+            Text(
+                "[ $it ]",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 8.dp, start = 6.dp, end = 6.dp),
+            )
+        }
+        Spacer(Modifier.height(18.dp))
+        OutlinedTextField(
+            value = code,
+            onValueChange = { code = it; wrong = false },
+            label = { Text("Ange kod") },
+            singleLine = true,
+            isError = wrong,
+        )
+        if (wrong) Text("Fel kod. Skicka beviset först, din lilla fuskare — koderna är enkrypterade! 😉", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = {
+                if (sha256(code.trim().uppercase()) == quest.codeHash) onUnlock() else wrong = true
+            },
+            enabled = code.isNotBlank(),
+        ) { Text("Lås upp", fontWeight = FontWeight.Bold) }
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+// Node 20: a gift reveal — no code, just open the present and continue.
+@Composable
+private fun GiftScreen(quest: Quest, onUnlock: () -> Unit) {
+    val scroll = rememberScrollState()
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(12.dp).verticalScroll(scroll),
+    ) {
+        Text("🎁", fontSize = 72.sp)
+        Text(
+            "Grattis — det här är din present! 🎉\nÖppna den, och tryck sedan Fortsätt.",
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 18.dp),
+        )
+        Button(onClick = onUnlock) { Text("Fortsätt →", fontWeight = FontWeight.Bold) }
     }
 }
 

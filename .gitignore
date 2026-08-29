@@ -6,3 +6,8 @@ local.properties
 .idea/
 *.iml
 .DS_Store
+
+# unlock code plaintexts — the repo is public, keep these out of it
+CODES.local.md
+Cake/
+guess_age/

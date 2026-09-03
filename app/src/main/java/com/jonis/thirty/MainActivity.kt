@@ -73,7 +73,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 26
+private const val APP_VERSION = 27
 
 // LOCAL DEV ONLY — SET BACK TO false BEFORE CUTTING A RELEASE.
 // Unlocks every node so the whole road map is clickable without playing through it, and
@@ -122,7 +122,7 @@ data class Quest(
     // an aside after the fact; a lead-in has to land before the task does. Quiet italic on
     // a challenge screen, the big shout on the finale.
     val lead: String? = null,
-    // optional picture that IS the task (node 27: recreate this photo)
+    // optional picture that IS the task ("recreate this photo") — no node uses it today
     val imageRes: Int? = null,
 )
 
@@ -208,6 +208,19 @@ private val baseQuests = listOf(
 const val BRANCH_ADVENTURE = "ADV"
 const val BRANCH_CHILL = "CHILL"
 
+// The gift reveal, and the last node anyone can reach without having chosen a road.
+const val FORK_NODE = 20
+
+// The one task that sits on BOTH roads, word for word — the joke is the punchline of
+// turning 30 and it lands the same either way. Only the code differs, so a replay of the
+// other tail can't be waved through with the code he already has.
+private fun massageQuest(codeHash: String) = Quest(
+    "Massage", "Massera närmsta 33-åring — utan att klaga.",
+    GameType.CHALLENGE, 0, codeHash = codeHash,
+    lead = "Tycker du att det är jobbigt att vara 30? Föreställ dig att vara 33.",
+    proofHint = "Bildbevis på massagen",
+)
+
 // Nodes 22-29 if he takes the adventure road. Bias: every task should leave a photo
 // behind that's worth looking at in ten years — the "do it three times in three places"
 // shape gives a set rather than a single snap.
@@ -244,34 +257,23 @@ private val adventureTail = listOf(
         GameType.CHALLENGE, 0, codeHash = "2781ae72c8471eb00777e33d8f9dccc9ac2c3811ab2d564f302484f1765a8e3e",
         lead = "Gooodmorgon!! Dags för springturen, muhahah!",
     ),
-    // The picture IS the task here, so it sits above the code field at full width.
-    Quest(
-        "Imitation", "Återskapa denna bild så bra som möjligt.",
-        GameType.CHALLENGE, 0, codeHash = "6ac047a7cd15da712e21b992097e22c9998a92834dbe26aeaf7b4bd0a79e0e85",
-        imageRes = R.drawable.imitation,
-    ),
+    massageQuest("64467e9508999d33b20339d68c429b9c897c14f41e7d0c99fdea39611efdc27e"),
     Quest(
         "Hammarbybacken", "Ta dig upp för hela Hammarbybacken.",
         GameType.CHALLENGE, 0, codeHash = "7e5a36510da206c56cff337ad05fa3a2896e3aacf48b74e33990b08778a17c4f",
         proofHint = "Selfie på toppen",
     ),
     // Node 29: no code to text, just the photo quiz — the road earns its last node itself.
-    Quest("Gissa åldern", "Hur gammal var du på kortet?", GameType.GUESS, 2),
+    Quest("Gissa åldern", "Hur gammal var personen på kortet?", GameType.GUESS, 2),
 )
 
-// Nodes 22-29 if he takes the calm road: games first, and the few real-world bits are
+// Nodes 22-29 if he takes the calm road: mostly games, and the few real-world bits are
 // short ones that leave a picture behind.
+//
+// Fågelskådning sits FIRST and Flappy Jonis last on purpose: node 22 asks him to record
+// himself imitating five birds, and those voice notes are the sounds Flappy Jonis flaps
+// to at node 27. The recording has to exist before the game that plays it back.
 private val chillTail = listOf(
-    Quest("Flappy Jonis", "Flaxa dig förbi rören — ta dig igenom 30", GameType.FLAPPY, 30),
-    Quest(
-        "Outfit", "Eftersom du valde den tråkiga vägen får du som straff att klä ut dig " +
-            "till något roligt.",
-        GameType.CHALLENGE, 0, codeHash = "c7b2234f795bae1b8e0e3edbea165fe631c26e2a98a3c5bb31044e5526929acf",
-        proofHint = "Bildbevis",
-    ),
-    Quest("Gissa åldern", "Hur gammal var du på kortet?", GameType.GUESS, 2),
-    Quest("Minröjning", "Röj rutnätet — släkten ligger som minor under rutorna", GameType.MINESWEEPER, 0),
-    Quest("Var är Farmor?", "Hitta Farmor bland släkten — 6 rundor på tid, max 2 missar", GameType.FIND, 6),
     Quest(
         "Fågelskådning", "Ta en bild på 5 fåglar, googla hur de låter och skicka en voice " +
             "note där du försöker imitera dem.",
@@ -280,13 +282,17 @@ private val chillTail = listOf(
         proofHint = "5 fågelbilder + en voice note",
         steps = listOf("Fågel 1", "Fågel 2", "Fågel 3", "Fågel 4", "Fågel 5"),
     ),
-    // Its own picture, not the one on the äventyr road — both branches can't spend the
-    // same joke, since he might replay the other tail afterwards.
     Quest(
-        "Imitation", "Efterlikna denna bild så bra som möjligt.",
-        GameType.CHALLENGE, 0, codeHash = "af8c7d224884846b7c233cd66f5e11214e9512521243ec6af6afdc911e17b720",
-        imageRes = R.drawable.imitation_lugn,
+        "Outfit", "Eftersom du valde den tråkiga vägen får du som straff att klä ut dig " +
+            "till något roligt.",
+        GameType.CHALLENGE, 0, codeHash = "c7b2234f795bae1b8e0e3edbea165fe631c26e2a98a3c5bb31044e5526929acf",
+        proofHint = "Bildbevis",
     ),
+    Quest("Gissa åldern", "Hur gammal var personen på kortet?", GameType.GUESS, 2),
+    Quest("Minröjning", "Röj rutnätet — släkten ligger som minor under rutorna", GameType.MINESWEEPER, 0),
+    Quest("Var är Farmor?", "Hitta Farmor bland släkten — 6 rundor på tid, max 2 missar", GameType.FIND, 6),
+    Quest("Flappy Jonis", "Flaxa dig förbi rören — ta dig igenom 30", GameType.FLAPPY, 30),
+    massageQuest("d693c42304a72a61a975e3b0b525ad68bf3b43d44a7ece7a9dedd927aad1b05b"),
     Quest(
         "Stopp i toan", "Ånej, det verkar som att det är stopp i toan!",
         GameType.PLUNGER, 0,
@@ -382,13 +388,14 @@ fun JonisApp() {
         mutableStateOf(prefs.getString("branch", if (DEV_UNLOCK_ALL) BRANCH_ADVENTURE else null))
     }
     val quests = remember(branch) { questsFor(branch) }
-    // Fresh installs start with nodes 1–17 already cleared (through "Stå på händer") so a
+    // Fresh installs start with nodes 1–21 already cleared (through "Picasso") so a
     // reinstall doesn't make him replay a fortnight of challenges. `unlocked` is the highest
-    // OPEN node, so 18 means 17 done and Stjärntrappan next. Existing saves keep theirs, and
-    // the clamp guards against a stored value larger than the current quest list.
+    // OPEN node, so 22 means 21 done and the first node of his chosen tail next. Existing
+    // saves keep theirs, and the clamp guards against a stored value larger than the current
+    // quest list.
     var unlocked by remember {
         mutableIntStateOf(
-            if (DEV_UNLOCK_ALL) quests.size else prefs.getInt("unlocked", 18).coerceIn(1, quests.size),
+            if (DEV_UNLOCK_ALL) quests.size else prefs.getInt("unlocked", 22).coerceIn(1, quests.size),
         )
     }
 
@@ -402,8 +409,14 @@ fun JonisApp() {
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
         // An unbuilt "???" slot is scenery, not a gate. If the next node up is one, step
         // over it so the road still reaches the finish while the slot stays empty.
-        val reach = remember(quests, unlocked) {
+        //
+        // The fork IS a gate, though: with no road picked the tail is nine "???" slots, so
+        // the skip above would walk straight to the finish and call it 29/30 done. Hold the
+        // road at node 20 until the choice exists — a fresh install lands on the gift, and
+        // the moment he picks a tail this clamp lifts and `unlocked` takes over again.
+        val reach = remember(quests, unlocked, branch) {
             var u = unlocked.coerceIn(1, quests.size)
+            if (branch == null) u = minOf(u, FORK_NODE)
             while (u < quests.size && quests[u - 1].type == GameType.LOCKED) u++
             u
         }
@@ -2588,41 +2601,56 @@ private fun FlappyGame(target: Int, onWin: () -> Unit) {
     }
 }
 
-// ---------- Game 12 (chill tail): guess how old he was ----------
+// ---------- Game 12 (both tails): guess how old the person in the photo was ----------
 
-// Jonis turns 30 in 2026, so 1996. Ages in the game are derived from this — if it's wrong
-// every answer is off by the same amount.
-private const val BIRTH_YEAR = 1996
+// One round. The source file in guess_age/ is named after its own answer, so `answer` is
+// just that number: the age of the person in the picture. The one photo with TWO people in
+// it can't ask for an age — whose? — so it asks for the year instead, and `askYear` swaps
+// both the question and the shape of the decoys.
+private data class GuessPhoto(val res: Int, val answer: Int, val askYear: Boolean = false)
 
-// Photo year -> drawable. Drop another file in guess_age/, run the same magick crop into
+// Drop another file in guess_age/ named after the age, run the same magick crop into
 // res/drawable, add a line here, and the game grows a round on its own.
-private val guessPhotos = mapOf(
-    2009 to R.drawable.ga2009,
-    2022 to R.drawable.ga2022,
-    2024 to R.drawable.ga2024,
+private val guessPhotos = listOf(
+    GuessPhoto(R.drawable.ga_age08, 8),
+    GuessPhoto(R.drawable.ga_age09a, 9),
+    GuessPhoto(R.drawable.ga_age09b, 9),
+    GuessPhoto(R.drawable.ga_age10, 10),
+    GuessPhoto(R.drawable.ga_age13, 13),
+    GuessPhoto(R.drawable.ga_age15a, 15),
+    GuessPhoto(R.drawable.ga_age15b, 15),
+    GuessPhoto(R.drawable.ga_age16a, 16),
+    GuessPhoto(R.drawable.ga_age16b, 16),
+    GuessPhoto(R.drawable.ga_age26, 26),
+    GuessPhoto(R.drawable.ga_age28, 28),
+    GuessPhoto(R.drawable.ga_year2012, 2012, askYear = true),
 )
 
 @Composable
 private fun GuessAgeGame(target: Int, onWin: () -> Unit) {
     var restart by remember { mutableIntStateOf(0) }
-    val years = remember(restart) { guessPhotos.keys.shuffled() }
-    val rounds = years.size
+    val photos = remember(restart) { guessPhotos.shuffled() }
+    val rounds = photos.size
     var round by remember(restart) { mutableIntStateOf(0) }
     var score by remember(restart) { mutableIntStateOf(0) }
     var picked by remember(restart) { mutableStateOf<Int?>(null) }
 
-    // the pass mark grows with the pool: 2-of-3 today, but a 2-of-30 node would be a
-    // formality once more photos land in `guessPhotos`
+    // the pass mark grows with the pool — 8-of-12 today — so dropping more photos into
+    // `guessPhotos` never turns the node into a formality
     val pass = maxOf(target, (rounds * 3 + 4) / 5)
     if (round >= rounds) {
         ScorePanel(score, pass, onRetry = { restart++ }, onContinue = onWin)
         return
     }
 
-    val answer = years[round] - BIRTH_YEAR
-    // decoys sit close to the real age, so it's a look-at-the-picture job, not a coin flip
+    val photo = photos[round]
+    val answer = photo.answer
+    // decoys sit close to the real answer, so it's a look-at-the-picture job, not a coin
+    // flip. Ages are clamped to a plausible span; years need no clamp, the offsets are it.
     val options = remember(restart, round) {
-        val spread = listOf(-6, -4, -3, -2, 2, 3, 4, 6).map { answer + it }.filter { it in 1..34 }
+        val spread = listOf(-6, -4, -3, -2, 2, 3, 4, 6)
+            .map { answer + it }
+            .filter { photo.askYear || it in 1..34 }
         (spread.shuffled().take(3) + answer).shuffled()
     }
     val scroll = rememberScrollState()
@@ -2639,44 +2667,50 @@ private fun GuessAgeGame(target: Int, onWin: () -> Unit) {
             color = MaterialTheme.colorScheme.primary,
         )
         Image(
-            painterResource(guessPhotos[years[round]]!!),
-            "Hur gammal?",
+            painterResource(photo.res),
+            if (photo.askYear) "Vilket år?" else "Hur gammal?",
             Modifier.padding(top = 12.dp).size(240.dp).clip(RoundedCornerShape(20.dp)),
             contentScale = ContentScale.Crop,
         )
         Text(
-            "Hur gammal var du här?",
+            // two people in the frame, so this one asks for the year the picture was taken
+            if (photo.askYear) "Vilket år är kortet taget?" else "Hur gammal är personen på kortet?",
             fontSize = 17.sp,
             fontWeight = FontWeight.Black,
             modifier = Modifier.padding(top = 16.dp, bottom = 12.dp),
         )
         options.chunked(2).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(vertical = 5.dp)) {
-                row.forEach { age ->
+                row.forEach { option ->
                     val state = picked
                     Button(
                         onClick = {
                             if (state == null) {
-                                picked = age
-                                if (age == answer) score++
+                                picked = option
+                                if (option == answer) score++
                             }
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = when {
                                 state == null -> MaterialTheme.colorScheme.primary
-                                age == answer -> Color(0xFF6FBF3F)
-                                age == state -> MaterialTheme.colorScheme.error
+                                option == answer -> Color(0xFF6FBF3F)
+                                option == state -> MaterialTheme.colorScheme.error
                                 else -> MaterialTheme.colorScheme.surfaceVariant
                             },
                         ),
                         modifier = Modifier.width(120.dp),
-                    ) { Text("$age år", fontWeight = FontWeight.Black) }
+                    ) { Text(if (photo.askYear) "$option" else "$option år", fontWeight = FontWeight.Black) }
                 }
             }
         }
         if (picked != null) {
             Text(
-                if (picked == answer) "Rätt! ${years[round]}." else "Nej — du var $answer, ${years[round]}.",
+                when {
+                    picked == answer && photo.askYear -> "Rätt! $answer."
+                    picked == answer -> "Rätt! $answer år."
+                    photo.askYear -> "Nej — kortet är från $answer."
+                    else -> "Nej — personen var $answer år."
+                },
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

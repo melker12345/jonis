@@ -5,7 +5,7 @@ plugins {
 }
 
 android { namespace = "com.jonis.thirty"; compileSdk = 35
-    defaultConfig { applicationId = "com.jonis.thirty"; minSdk = 24; targetSdk = 35; versionCode = 27; versionName = "3.6" }
+    defaultConfig { applicationId = "com.jonis.thirty"; minSdk = 24; targetSdk = 35; versionCode = 28; versionName = "3.7" }
     // Fixed debug keystore committed to the repo so EVERY build (local + CI) signs with
     // the same key. Without this, CI generates a random debug key per run, so updates
     // fail with "app not installed" (signature mismatch). It's only a debug key.

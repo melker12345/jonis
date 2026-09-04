@@ -2,6 +2,9 @@ package com.jonis.thirty
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.media.SoundPool
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -64,6 +67,8 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.Calendar
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.sin
@@ -73,7 +78,7 @@ import kotlin.random.Random
 
 // Bump this together with versionCode in app/build.gradle.kts AND "version" in version.json
 // each time you ship a new APK. If the remote version is higher, the app forces an update.
-private const val APP_VERSION = 27
+private const val APP_VERSION = 28
 
 // LOCAL DEV ONLY — SET BACK TO false BEFORE CUTTING A RELEASE.
 // Unlocks every node so the whole road map is clickable without playing through it, and
@@ -292,7 +297,7 @@ private val chillTail = listOf(
     Quest("Minröjning", "Röj rutnätet — släkten ligger som minor under rutorna", GameType.MINESWEEPER, 0),
     Quest("Var är Farmor?", "Hitta Farmor bland släkten — 6 rundor på tid, max 2 missar", GameType.FIND, 6),
     Quest("Flappy Jonis", "Flaxa dig förbi rören — ta dig igenom 30", GameType.FLAPPY, 30),
-    massageQuest("d693c42304a72a61a975e3b0b525ad68bf3b43d44a7ece7a9dedd927aad1b05b"),
+    massageQuest("a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"),
     Quest(
         "Stopp i toan", "Ånej, det verkar som att det är stopp i toan!",
         GameType.PLUNGER, 0,
@@ -303,13 +308,12 @@ private val chillTail = listOf(
 // ends at the real present — the one the whole map was built to hand over. Each road
 // gets its own sign-off; `lead` is the big shout above the message.
 private val adventureFinale = Quest(
-    "Wippi!!!! 🎁", "Öppna din sista present! Den du har gjort alla dessa utmaningar för.",
+    "Wippi!!!! 🎁", "Grattis!!! Nu jävlar är det färdigfirat tills du är 50.",
     GameType.FINALE, 0, lead = "WIPPI!!!!",
 )
 
 private val chillFinale = Quest(
-    "Grattis 🎁", "Nu är det äntligen färdigfirat! Här kommer sista presenten!\n" +
-        "Grattis igen, din gamling!",
+    "Grattis 🎁", "Grattis!!! Nu jävlar är det färdigfirat tills du är 50.",
     GameType.FINALE, 0, lead = "JIPPIII!!!",
 )
 
@@ -322,6 +326,23 @@ fun questsFor(branch: String?): List<Quest> = baseQuests + when (branch) {
     BRANCH_CHILL -> chillTail + chillFinale
     else -> lockedTail
 }
+
+// Jonis' bird voice notes from the Fågelskådning task, converted from the WhatsApp
+// recordings. Flappy Jonis chirps one per cleared pipe; node 30 loops them as the
+// slideshow soundtrack.
+private val birdTracks = listOf(
+    R.raw.bird01, R.raw.bird02, R.raw.bird03, R.raw.bird04, R.raw.bird05, R.raw.bird06,
+)
+
+// every photo proof collected over the challenge, in rough shooting order — the node 30
+// slideshow. Source files live in 30/ in the repo root.
+private val finalePhotos = listOf(
+    R.drawable.finale01, R.drawable.finale02, R.drawable.finale03, R.drawable.finale04,
+    R.drawable.finale05, R.drawable.finale06, R.drawable.finale07, R.drawable.finale08,
+    R.drawable.finale09, R.drawable.finale10, R.drawable.finale11, R.drawable.finale12,
+    R.drawable.finale13, R.drawable.finale14, R.drawable.finale15, R.drawable.finale16,
+    R.drawable.finale17, R.drawable.finale18, R.drawable.finale19,
+)
 
 // pool of family faces reused across games
 private val faces = listOf(
@@ -2461,6 +2482,22 @@ private class Pipe(var x: Float, val gapY: Float, var scored: Boolean = false)
 private fun FlappyGame(target: Int, onWin: () -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
+        // Jonis' own bird imitations, one random chirp per cleared pipe. SoundPool so
+        // playback never stalls the frame loop.
+        val ctx = LocalContext.current
+        val chirpPool = remember {
+            SoundPool.Builder()
+                .setMaxStreams(3)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+                .build()
+        }
+        val chirps = remember { birdTracks.map { chirpPool.load(ctx, it, 1) } }
+        DisposableEffect(Unit) { onDispose { chirpPool.release() } }
         val wpx = with(density) { maxWidth.toPx() }
         val hpx = with(density) { maxHeight.toPx() }
         val birdSz = with(density) { 52.dp.toPx() }
@@ -2523,6 +2560,7 @@ private fun FlappyGame(target: Int, onWin: () -> Unit) {
                         if (!p.scored && p.x + pipeW < bx) {
                             p.scored = true
                             score++
+                            chirpPool.play(chirps.random(), 1f, 1f, 1, 0, 1f)
                             if (score >= target) { onWin(); ended = true }
                         }
                     }
@@ -3517,8 +3555,35 @@ private fun PlungerGame(onWin: () -> Unit) {
 
 // ---------- Node 30: the finish line ----------
 
+// Midnight going into the 50th birthday. Calendar, not java.time: minSdk is 24 and the
+// project doesn't desugar.
+private val fiftiethMillis: Long = Calendar.getInstance().run {
+    clear()
+    set(2046, Calendar.AUGUST, 24)
+    timeInMillis
+}
+
 @Composable
 private fun FinaleScreen(quest: Quest, onDone: () -> Unit) {
+    var showGallery by remember { mutableStateOf(false) }
+    if (showGallery) FinaleGallery(onDone) else FinaleIntro(quest) { showGallery = true }
+}
+
+@Composable
+private fun FinaleIntro(quest: Quest, onContinue: () -> Unit) {
+    // ticking clock — the hour count barely moves, the seconds line is what shows it's live
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val left = (fiftiethMillis - now).coerceAtLeast(0L)
+    val hours = String.format(Locale.US, "%,d", left / 3_600_000L).replace(",", " ")
+    val min = (left / 60_000L) % 60
+    val sec = (left / 1000L) % 60
+
     val scroll = rememberScrollState()
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -3537,7 +3602,7 @@ private fun FinaleScreen(quest: Quest, onDone: () -> Unit) {
             )
         }
         Text(
-            quest.tag,
+            "Grattis!!! Nu jävlar är det färdigfirat tills du är 50.",
             fontSize = 17.sp,
             lineHeight = 24.sp,
             fontWeight = FontWeight.Bold,
@@ -3545,7 +3610,92 @@ private fun FinaleScreen(quest: Quest, onDone: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(top = 18.dp, start = 14.dp, end = 14.dp),
         )
-        Button(onClick = onDone, modifier = Modifier.padding(top = 34.dp, bottom = 20.dp)) {
+        Text(
+            "$hours timmar",
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Black,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = 20.dp),
+        )
+        Text(
+            "%d min %02d s kvar till 24 augusti 2046".format(min, sec),
+            fontSize = 13.sp,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Text(
+            "Ifall att du blivit dement här kommer bilder från äventyren.",
+            fontSize = 17.sp,
+            lineHeight = 24.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(top = 20.dp, start = 14.dp, end = 14.dp),
+        )
+        Button(onClick = onContinue, modifier = Modifier.padding(top = 30.dp, bottom = 20.dp)) {
+            Text("Fortsätt", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun FinaleGallery(onDone: () -> Unit) {
+    val ctx = LocalContext.current
+    var photo by remember { mutableIntStateOf(0) }
+    val count = finalePhotos.size
+
+    // the bird voice notes on endless rotation: each MediaPlayer plays one note, its
+    // completion bumps the index, and the DisposableEffect re-keys onto the next track.
+    // Leaving the screen disposes whichever player is current.
+    var track by remember { mutableIntStateOf(0) }
+    DisposableEffect(track) {
+        val mp = MediaPlayer.create(ctx, birdTracks[track % birdTracks.size])
+        mp?.setOnCompletionListener { track++ }
+        mp?.start()
+        onDispose { mp?.release() }
+    }
+
+    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            Image(
+                painterResource(finalePhotos[photo]),
+                "Äventyrsbild ${photo + 1}",
+                Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                contentScale = ContentScale.Fit,
+            )
+            // invisible half-screen tap zones — left steps back, right steps forward, both wrap
+            Row(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier.weight(1f).fillMaxHeight()
+                        .clickable { photo = (photo - 1 + count) % count },
+                )
+                Box(
+                    Modifier.weight(1f).fillMaxHeight()
+                        .clickable { photo = (photo + 1) % count },
+                )
+            }
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 8.dp),
+        ) {
+            IconButton({ photo = (photo - 1 + count) % count }) {
+                Icon(Icons.Outlined.ChevronLeft, "Föregående")
+            }
+            Text(
+                "${photo + 1} / $count",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            IconButton({ photo = (photo + 1) % count }) {
+                Icon(Icons.Outlined.ChevronRight, "Nästa")
+            }
+        }
+        Button(onClick = onDone, modifier = Modifier.padding(top = 2.dp, bottom = 14.dp)) {
             Text("🎂", fontSize = 18.sp)
         }
     }
